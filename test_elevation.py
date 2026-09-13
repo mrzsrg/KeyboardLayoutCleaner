@@ -3,6 +3,7 @@
 """test_elevation.py - Unit tests for elevation mechanism."""
 
 import ctypes
+import importlib
 import os
 import sys
 from pathlib import Path
@@ -239,6 +240,85 @@ class TestModuleImports:
         assert config.SANDBOX_MODE is True
         main._apply_sandbox_to_modules(False)
         assert config.SANDBOX_MODE is False
+
+
+class TestActiveLangCache:
+    """Эвристика «активного кеша» раскладки (main._active_lang_cache).
+
+    Кеш активного языка = записи ТОЛЬКО в CTF + этот язык присутствует
+    в списке языков Windows (PowerShell). Эвристика защищает живую
+    раскладку от ошибочного удаления как фантома.
+    """
+
+    @staticmethod
+    def _main(monkeypatch):
+        if "main" not in sys.modules:
+            monkeypatch.setitem(sys.modules, "customtkinter", _make_ctk())
+            return importlib.import_module("main")
+        return sys.modules["main"]
+
+    def test_ctf_only_plus_active_lang_in_ps_is_cache(self, monkeypatch):
+        m = self._main(monkeypatch)
+        data = {
+            "04190419": [
+                {
+                    "path": (
+                        r"HKCU\Software\Microsoft\CTF\Assemblies\0x00000419"
+                        r"\{34745C63-B2F0-4784-8B67-5E12C8701A31}\KeyboardLayout"
+                    )
+                },
+            ],
+            "00000419": [{"path": "PowerShell\\Get-WinUserLanguageList"}],
+        }
+        assert m._active_lang_cache("04190419", data) is True
+
+    def test_registry_preload_location_means_not_cache(self, monkeypatch):
+        m = self._main(monkeypatch)
+        data = {
+            "04190419": [
+                {"path": r"HKCU\Software\Microsoft\CTF\Assemblies\{GUID}"},
+                {"path": r"HKCU\Keyboard Layout\Preload\1"},
+            ],
+            "00000419": [{"path": "PowerShell\\Get-WinUserLanguageList"}],
+        }
+        assert m._active_lang_cache("04190419", data) is False
+
+    def test_registry_substitutes_location_means_not_cache(self, monkeypatch):
+        m = self._main(monkeypatch)
+        data = {
+            "04190419": [
+                {"path": r"HKCU\Software\Microsoft\CTF\Assemblies\{GUID}"},
+                {"path": r"HKCU\Keyboard Layout\Substitutes"},
+            ],
+            "00000419": [{"path": "PowerShell\\Get-WinUserLanguageList"}],
+        }
+        assert m._active_lang_cache("04190419", data) is False
+
+    def test_no_powershell_pair_returns_false(self, monkeypatch):
+        m = self._main(monkeypatch)
+        data = {"04190419": [{"path": r"HKCU\Software\Microsoft\CTF\Assemblies\{GUID}"}]}
+        assert m._active_lang_cache("04190419", data) is False
+
+    def test_different_langid_in_ps_returns_false(self, monkeypatch):
+        m = self._main(monkeypatch)
+        data = {
+            "04190419": [{"path": r"HKCU\Software\Microsoft\CTF\Assemblies\{GUID}"}],
+            "00000409": [{"path": "PowerShell\\Get-WinUserLanguageList"}],
+        }
+        assert m._active_lang_cache("04190419", data) is False
+
+    def test_invalid_klid_returns_false(self, monkeypatch):
+        m = self._main(monkeypatch)
+        assert m._active_lang_cache("zz-not-hex", {}) is False
+
+    def test_zero_langid_returns_false(self, monkeypatch):
+        m = self._main(monkeypatch)
+        data = {"00000000": [{"path": r"HKCU\Software\Microsoft\CTF"}]}
+        assert m._active_lang_cache("00000000", data) is False
+
+    def test_missing_locations_returns_false(self, monkeypatch):
+        m = self._main(monkeypatch)
+        assert m._active_lang_cache("00000409", {}) is False
 
 
 if __name__ == "__main__":

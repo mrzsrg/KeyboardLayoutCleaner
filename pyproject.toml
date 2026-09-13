@@ -1,3 +1,7 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "keyboard-layout-cleaner"
 version = "1.0.0"
@@ -56,3 +60,18 @@ source = [
     "ui_theme",
 ]
 omit = ["*/conftest.py", "*/test_*.py", "*/__init__.py"]
+
+[tool.setuptools]
+# Плоский модульный layout: явно перечисляем модули приложения, чтобы
+# ``pip install .`` не собирал в пакет тесты/локали/assets.
+py-modules = [
+    "main",
+    "scanner",
+    "cleaner",
+    "config",
+    "applog",
+    "winproc",
+    "i18n",
+    "gui_widgets",
+    "ui_theme",
+]

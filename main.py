@@ -45,7 +45,11 @@ except Exception:
 # ---------------------------------------------------------------------------
 # Импорт из центрального модуля конфигурации
 # ---------------------------------------------------------------------------
-from config import enable_sandbox, disable_sandbox  # noqa: E402 — импорты ниже _parse_sandbox_mode намеренны (см. блок на стр. 221)
+from config import (  # noqa: E402 — импорты ниже _parse_sandbox_mode намеренны (см. блок на стр. 221)
+    enable_sandbox,
+    disable_sandbox,
+    __version__ as APP_VERSION,
+)
 
 # ---------------------------------------------------------------------------
 # Глобальный режим песочницы — переключается через --sandbox или env
@@ -346,7 +350,7 @@ class KeyboardLayoutCleaner(ctk.CTk):
     def __init__(self) -> None:
         super().__init__()
 
-        self.title(_t("app_title"))
+        self.title(f"{_t('app_title')}  v{APP_VERSION}")
         self.geometry("900x780")
         self.minsize(820, 660)
 
@@ -617,7 +621,7 @@ class KeyboardLayoutCleaner(ctk.CTk):
 
     def _apply_static_texts(self) -> None:
         """Перевести статические элементы (при смене языка)."""
-        self.title(_t("app_title"))
+        self.title(f"{_t('app_title')}  v{APP_VERSION}")
         # Подписи переключателей вида (интерфейс/яркость) в шапке
         if self.admin_banner:
             self.admin_banner.apply_language()

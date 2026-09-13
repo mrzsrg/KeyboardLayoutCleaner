@@ -4,7 +4,9 @@ test_scanner.py - Unit tests for scanner / cleaner / main (registry-free).
 Mock-based using in-memory FakeWinreg and unittest.mock.
 Markers: @pytest.mark.gui, @pytest.mark.live
 """
+import json
 import os
+import re
 import subprocess
 import tempfile
 from pathlib import Path
@@ -877,6 +879,125 @@ class TestWinprocHelper:
         entries = scanner._get_language_list_from_powershell()
         assert entries and entries[0]["LanguageTag"] == "en-US"
         assert recorded, "run_hidden должен вызывать общий subprocess.run"
+
+
+# ---------------------------------------------------------------------------
+# TestRestoreLanguageList
+# ---------------------------------------------------------------------------
+class TestRestoreLanguageList:
+    """restore_language_list: генерация PS-скрипта из JSON и экранирование '.
+
+    Единственная защита от PS-инъекции в этом пути — экранирование
+    одинарных кавычек (' -> '') при сборке New-WinUserLanguageList.
+    """
+
+    @staticmethod
+    def _write_json(data):
+        jp = Path(_tmp_dir()) / "langlist.json"
+        jp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        return jp
+
+    def _capture_success_run(self):
+        captured = {}
+
+        def fake_run(cmd, **kw):
+            captured["cmd"] = cmd
+            return _proc(returncode=0, stdout="SUCCESS")
+
+        return captured, fake_run
+
+    def test_success_builds_ps_script(self):
+        jp = self._write_json(
+            [{"LanguageTag": "en-US", "InputMethodTips": ["0409:00000409"]}]
+        )
+        captured, fake_run = self._capture_success_run()
+        with mock.patch.object(cleaner, "run_hidden", fake_run):
+            ok = cleaner.restore_language_list(jp)
+        assert ok is True
+        script = captured["cmd"][-1]
+        assert "New-WinUserLanguageList -Language 'en-US'" in script
+        assert "'0409:00000409'" in script
+        assert "Set-WinUserLanguageList" in script
+        assert '"SUCCESS"' in script
+
+    def test_single_quotes_are_escaped(self):
+        jp = self._write_json(
+            [
+                {
+                    "LanguageTag": "O'Brien",
+                    "InputMethodTips": ["0419:00000419", "It's"],
+                }
+            ]
+        )
+        captured, fake_run = self._capture_success_run()
+        with mock.patch.object(cleaner, "run_hidden", fake_run):
+            assert cleaner.restore_language_list(jp) is True
+        script = captured["cmd"][-1]
+        # Экранирование '' — единственная защита от PS-инъекции:
+        assert "-Language 'O''Brien'" in script
+        assert "'It''s'" in script
+        assert "O'Brien" not in script.replace("O''Brien", "")
+
+    def test_dict_input_supported(self):
+        jp = self._write_json({"LanguageTag": "de-DE", "InputMethodTips": []})
+        captured, fake_run = self._capture_success_run()
+        with mock.patch.object(cleaner, "run_hidden", fake_run):
+            assert cleaner.restore_language_list(jp) is True
+        assert "New-WinUserLanguageList -Language 'de-DE'" in captured["cmd"][-1]
+
+    def test_false_without_success_marker(self):
+        jp = self._write_json(
+            [{"LanguageTag": "en-US", "InputMethodTips": ["0409:00000409"]}]
+        )
+
+        def fake_run(cmd, **kw):
+            return _proc(returncode=0, stdout="FAILED")
+
+        with mock.patch.object(cleaner, "run_hidden", fake_run):
+            assert cleaner.restore_language_list(jp) is False
+
+    def test_false_on_timeout(self):
+        jp = self._write_json(
+            [{"LanguageTag": "en-US", "InputMethodTips": ["0409:00000409"]}]
+        )
+
+        def fake_run(cmd, **kw):
+            raise subprocess.TimeoutExpired(cmd=cmd, timeout=45)
+
+        with mock.patch.object(cleaner, "run_hidden", fake_run):
+            assert cleaner.restore_language_list(jp) is False
+
+    def test_false_on_invalid_json(self):
+        jp = Path(_tmp_dir()) / "langlist.json"
+        jp.write_text("{not-json", encoding="utf-8")
+        with mock.patch.object(cleaner, "run_hidden", _proc):
+            assert cleaner.restore_language_list(jp) is False
+
+    def test_false_when_no_valid_entries(self):
+        jp = self._write_json([{"LanguageTag": "  ", "InputMethodTips": []}])
+        with mock.patch.object(cleaner, "run_hidden", _proc):
+            assert cleaner.restore_language_list(jp) is False
+
+
+# ---------------------------------------------------------------------------
+# TestVersion
+# ---------------------------------------------------------------------------
+class TestVersion:
+    """__version__ в коде совпадает с pyproject.toml."""
+
+    def test_config_defines_version(self):
+        assert isinstance(config.__version__, str)
+        assert config.__version__.count(".") >= 2
+
+    def test_version_matches_pyproject(self):
+        text = (
+            Path(__file__).resolve().parent.joinpath("pyproject.toml").read_text(
+                encoding="utf-8"
+            )
+        )
+        m = re.search(r'^version\s*=\s*"([^"]+)"', text, re.MULTILINE)
+        assert m is not None, "version не найден в pyproject.toml"
+        assert m.group(1) == config.__version__
 
 
 if __name__ == "__main__":

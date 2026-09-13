@@ -4,7 +4,7 @@
 
 Проверка выполнена фактически: запущены все тесты (`test_scanner` — 55 passed; `test_sandbox` — 26 passed; `test_elevation/mutex/restart_integration` — 19 passed / **3 failed**), прогнан `ruff check` (30 замечаний), выполнены точечные рантайм-проверки подозрительных мест.
 
-> **Статус исправлений:** работа идёт по плану из раздела 6, по одному пункту за итерацию. Выполненные пункты помечены ✅ в разделе 6 с кратким описанием изменений. Текущий прогресс: **6/7** (все P0 закрыты; P1: окна консоли, инфраструктура CI/git, sandbox-ключи/локали/зависимости — исправлены; 13.09.2026).
+> **Статус исправлений:** работа идёт по плану из раздела 6, по одному пункту за итерацию. Выполненные пункты помечены ✅ в разделе 6 с кратким описанием изменений. Текущий прогресс: **7/7** (все P0 и P1 закрыты; P2: build-system, `__version__`, тесты на `_active_lang_cache`/`restore_language_list` — выполнены; 13.09.2026).
 
 ---
 
@@ -86,9 +86,9 @@ cleaner sees branch:    ('HKCU', 'Keyboard Layout\Preload', ...)   ← реал�
 
 7. **Расхождение имён sandbox-ключей — ✅ ИСПРАВЛЕНО 13.09.2026 (см. план, п.6).** Приложение: `HKCU\Software\KeyboardCleanerTest` (config.py, help `--sandbox`), живые тесты: `HKCU\Software\TestLayoutCleaner` (test_sandbox.py), README упоминает `TestLayoutCleaner`. Путаница при диагностике.
 
-8. **pyproject.toml без секции `[build-system]`.** `pip install -e ".[dev]"` в `tests.yml` полагается на дефолт setuptools; плоский модульный layout — pip соберёт и тесты в пакет. Версия только в pyproject, в коде `__version__` нет.
+8. **pyproject.toml без секции `[build-system]` — ✅ ИСПРАВЛЕНО 13.09.2026 (см. план, п.7).** `pip install -e ".[dev]"` в `tests.yml` полагается на дефолт setuptools; плоский модульный layout — pip соберёт и тесты в пакет. Версия только в pyproject, в коде `__version__` нет.
 
-9. **Неприкрытые тестами риски очистки:** эвристика «активного кеша» раскладки (`_active_lang_cache`, main.py:301) может ошибочно считать живую раскладку фантомом — юнит-тестов нет. `restore_language_list` (генерация PS-скрипта из JSON, единственная защита — экранирование `'`) тоже не покрыта тестами.
+9. **Неприкрытые тестами риски очистки — ✅ ИСПРАВЛЕНО 13.09.2026 (см. план, п.7):** эвристика «активного кеша» раскладки (`_active_lang_cache`, main.py:301) может ошибочно считать живую раскладку фантомом — юнит-тестов нет. `restore_language_list` (генерация PS-скрипта из JSON, единственная защита — экранирование `'`) тоже не покрыта тестами.
 
 ---
 
@@ -161,6 +161,13 @@ cleaner sees branch:    ('HKCU', 'Keyboard Layout\Preload', ...)   ← реал�
    - **pytest-asyncio удалён** из `requirements-dev.in`/`requirements-dev.txt` (в проекте нет async-кода), вместе с ним — транзитивная `typing-extensions`;
    - **`conftest.py` удалён**: все его фикстуры/хелперы (`mock_winreg`, `mock_winreg_with_values`, `mock_subprocess_run`, `mock_is_admin_*`, `setup_winreg_mocks`) не использовались ни одним тестом — реальные тесты используют собственный `FakeWinreg`;
    - проверка: `ruff check .` — чисто; тесты — **120 passed** (94 unit + 26 live); локали — 3×179, валидный JSON.
-7. **(P2)** Добавить `[build-system]`, `__version__`, `noqa`-комментарии, тесты на `_active_lang_cache` и `restore_language_list`.
+7. ✅ **(P2) ИСПРАВЛЕНО 13.09.2026 — `[build-system]` + `__version__`, noqa-комментарии, тесты на `_active_lang_cache` и `restore_language_list`.**
+   Что сделано:
+   - **`[build-system]`** (`setuptools>=68` / `setuptools.build_meta`) + `[tool.setuptools] py-modules` — явный список 9 модулей приложения; проверено сборкой wheel: `keyboard_layout_cleaner-1.0.0-py3-none-any.whl` содержит только модули (тесты/локали/assets не попадают в пакет);
+   - **`__version__ = "1.0.0"`** добавлен в `config.py` (синхронизирован с `[project] version`); версия выводится в заголовке окна GUI («… v1.0.0»); регресс-тест `TestVersion` (совпадение с pyproject);
+   - **noqa-комментарии**: `# noqa: E402` с пояснением в `main.py` для намеренных «поздних» импортов (сделаны ещё в п.5), `# noqa: F401` в `test_elevation.py` для `import main` (исполняется ради синхронизации флагов) — руф чист без глобальных отключений;
+   - **тесты `_active_lang_cache`** (main.py): `TestActiveLangCache` (8 тестов) — CTF-only + активный язык в PowerShell → кеш; записи в Preload/Substitutes → не кеш; нет пары в PowerShell / другой язык ID / невалидный KLID / нулевой язык / отсутствие записей → False;
+   - **тесты `restore_language_list`** (cleaner.py): `TestRestoreLanguageList` (7 тестов) — корректная генерация PS-скрипта (`New-WinUserLanguageList`, `Set-WinUserLanguageList`, маркер `"SUCCESS"`), **экранирование `'` → `''`** (защита от PS-инъекции), поддержка dict-входа, отказы (нет маркера успеха, TimeoutExpired, невалидный JSON, пустые записи);
+   - проверка: `ruff check .` — чисто; тесты — **137 passed** (111 unit + 26 live); wheel собран.
 
 **Итог:** проект зрелый по домену (работа с реестром/PowerShell продумана), но «опасен по обещаниям»: sandbox-режим, который должен страховать от порчи системы, не страхует главный риск — удаление. Его и тестовую порядкозависимость следует чинить в первую очередь.

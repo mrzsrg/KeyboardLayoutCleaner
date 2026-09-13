@@ -4,7 +4,7 @@
 
 Проверка выполнена фактически: запущены все тесты (`test_scanner` — 55 passed; `test_sandbox` — 26 passed; `test_elevation/mutex/restart_integration` — 19 passed / **3 failed**), прогнан `ruff check` (30 замечаний), выполнены точечные рантайм-проверки подозрительных мест.
 
-> **Статус исправлений:** работа идёт по плану из раздела 6, по одному пункту за итерацию. Выполненные пункты помечены ✅ в разделе 6 с кратким описанием изменений. Текущий прогресс: **4/7** (все P0 закрыты; P1: окна консоли — исправлены; 13.09.2026).
+> **Статус исправлений:** работа идёт по плану из раздела 6, по одному пункту за итерацию. Выполненные пункты помечены ✅ в разделе 6 с кратким описанием изменений. Текущий прогресс: **5/7** (все P0 закрыты; P1: окна консоли и инфраструктура CI/git — исправлены; 13.09.2026).
 
 ---
 
@@ -144,7 +144,16 @@ cleaner sees branch:    ('HKCU', 'Keyboard Layout\Preload', ...)   ← реал�
    - регрессионные тесты `test_scanner.py::TestWinprocHelper` (5 шт.): флаг добавляется; существующие флаги объединяются; сквозной запуск реального процесса; **статическая регрессия** — в scanner.py/cleaner.py запрещён прямой `subprocess.run(`; мок через `scanner.subprocess.run` перехватывает вызовы из `run_hidden`;
    - проверка: `TestWinprocHelper` — 5 passed; рантайм-проверка — `creationflags=0x0800000`; полный набор — **120 passed** (было 115); ruff — новых замечаний нет (winproc.py чист).
    Примечание: модуль `winproc` подхватывается PyInstaller автоматически (обычный импорт); в `--noconsole`-сборке окна консоли больше не появляются.
-5. **(P1)** Инициализировать git, почистить артефакты (build/dist/zip/log/pyc), свести CI к одному workflow, заменить deprecated release-экшен, добавить coverage + ruff в CI.
+5. ✅ **(P1) ИСПРАВЛЕНО 13.09.2026 — Git-репозиторий, единый CI (ruff + coverage), замена release-экшена, чистка артефактов.**
+   Что сделано:
+   - `git init -b main`, настроен локальный git-пользователь, создан первый коммит (37 файлов);
+   - удалены артефакты: `build/`, `dist/`, `KeyboardLayoutCleaner-portable.zip`, `layout_cleaner.log`, `backups/` (с реальными .reg-снимками), `__pycache__/` (включая устаревший `cleaner_sb.*.pyc`), `.pytest_cache/`, `.ruff_cache/`;
+   - **ruff**: устранены все 27 замечаний (F401/E402/E702/E741/F841/E714): `ruff check .` — чисто. В `main.py` намеренным «поздним» импортам (sandbox-флаг должен считаться до импорта scanner/cleaner) добавлены `# noqa: E402` с пояснением;
+   - **один workflow** `.github/workflows/ci-cd.yml` (tests.yml удалён): `lint` (ruff вместо flake8/pylint/bandit), `test` (матрица 3.10/3.11/3.12, юнит-тесты + pytest-cov, артефакт `coverage.xml`), `test-live` (live-тесты sandbox; **без** `SANDBOX_MODE=1` — при нём падали 3 теста, т.к. их assertions рассчитаны на реальные ветки), `build` (PyInstaller), `build-release`;
+   - deprecated `actions/upload-release-asset@v1` заменён на `softprops/action-gh-release@v2` (glob `files`);
+   - **флакающие тесты укреплены** (замечание из п. 2): таймауты PowerShell в cleaner 30→45 с, ctfmon stop/start 15→20 с, `scanner._get_language_list_from_powershell` 15→20 с; поллинг мьютекса в `test_mutex_acquire_with_polling` 1→3 с; задержки в restart-сценарии увеличены;
+   - `requirements-dev.in/.txt`: добавлены `ruff` и `pytest-cov`; в `pyproject.toml` — секция `[tool.coverage.run]` (source = main/scanner/cleaner/...);
+   - проверка: `ruff check .` — чисто; тесты — **120 passed** (94 unit + 26 live); YAML workflow валиден; `git status` — рабочее дерево чистое.
 6. **(P1)** Согласовать имена sandbox-ключей, дописать de/pt/zh локали, убрать pytest-asyncio и мёртвые фикстуры conftest.
 7. **(P2)** Добавить `[build-system]`, `__version__`, `noqa`-комментарии, тесты на `_active_lang_cache` и `restore_language_list`.
 

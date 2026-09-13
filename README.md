@@ -80,7 +80,7 @@ python main.py
   языка и **не** активный язык из `Languages` — возможность вернуть
   раскладку через «Параметры → Язык и регион» сохраняется.
 - Автотесты записи/удаления выполняются **только** в sandbox-ключе
-  `HKCU\Software\TestLayoutCleaner` (см. `test_sandbox.py`).
+  `HKCU\Software\KeyboardCleanerTest` (см. `test_sandbox.py`).
   Реальное удаление раскладок из живого профиля тестируйте в VM
   (Windows Sandbox / Hyper-V).
 

@@ -4,7 +4,7 @@
 
 Проверка выполнена фактически: запущены все тесты (`test_scanner` — 55 passed; `test_sandbox` — 26 passed; `test_elevation/mutex/restart_integration` — 19 passed / **3 failed**), прогнан `ruff check` (30 замечаний), выполнены точечные рантайм-проверки подозрительных мест.
 
-> **Статус исправлений:** работа идёт по плану из раздела 6, по одному пункту за итерацию. Выполненные пункты помечены ✅ в разделе 6 с кратким описанием изменений. Текущий прогресс: **5/7** (все P0 закрыты; P1: окна консоли и инфраструктура CI/git — исправлены; 13.09.2026).
+> **Статус исправлений:** работа идёт по плану из раздела 6, по одному пункту за итерацию. Выполненные пункты помечены ✅ в разделе 6 с кратким описанием изменений. Текущий прогресс: **6/7** (все P0 закрыты; P1: окна консоли, инфраструктура CI/git, sandbox-ключи/локали/зависимости — исправлены; 13.09.2026).
 
 ---
 
@@ -84,7 +84,7 @@ cleaner sees branch:    ('HKCU', 'Keyboard Layout\Preload', ...)   ← реал�
    - `actions/upload-release-asset@v1` — заархивированный/deprecated экшен;
    - flake8/pylint в CI, но ни `setup.cfg`, ни `.pylintrc` в репозитории нет; локально используется ruff — выбор линтеров не согласован.
 
-7. **Расхождение имён sandbox-ключей.** Приложение: `HKCU\Software\KeyboardCleanerTest` (config.py, help `--sandbox`), живые тесты: `HKCU\Software\TestLayoutCleaner` (test_sandbox.py), README упоминает `TestLayoutCleaner`. Путаница при диагностике.
+7. **Расхождение имён sandbox-ключей — ✅ ИСПРАВЛЕНО 13.09.2026 (см. план, п.6).** Приложение: `HKCU\Software\KeyboardCleanerTest` (config.py, help `--sandbox`), живые тесты: `HKCU\Software\TestLayoutCleaner` (test_sandbox.py), README упоминает `TestLayoutCleaner`. Путаница при диагностике.
 
 8. **pyproject.toml без секции `[build-system]`.** `pip install -e ".[dev]"` в `tests.yml` полагается на дефолт setuptools; плоский модульный layout — pip соберёт и тесты в пакет. Версия только в pyproject, в коде `__version__` нет.
 
@@ -109,7 +109,7 @@ cleaner sees branch:    ('HKCU', 'Keyboard Layout\Preload', ...)   ← реал�
 - Пайплайн безопасности удаления: бэкап всех веток до изменений (объединение .reg-секций в UTF-16 LE с BOM), JSON-снимок списка языков, `BackupError` при полном провале экспорта, отчёт о неполном бэкапе, guard «последней раскладки», сухой план перед удалением.
 - Потоковая модель GUI: фоновые потоки + `queue.Queue` + опрос в UI-потоке — корректный подход для Tkinter.
 - Единый источник веток (`AFFECTED_BRANCHES`) и общая нормализация KLID между сканером и очистителем (`_klid_variants` ↔ `_normalize_klid_token`, decimal-HKL) — идея правильная (но см. P0-1).
-- Тесты: собственный in-memory `FakeWinreg` — быстрый и безопасный; live-тесты ограничены ключом `Software\TestLayoutCleaner`; фантомный KLID `d001dead`; teardown гарантированно чистит sandbox-ключ.
+- Тесты: собственный in-memory `FakeWinreg` — быстрый и безопасный; live-тесты ограничены ключом `Software\KeyboardCleanerTest`; фантомный KLID `d001dead`; teardown гарантированно чистит sandbox-ключ.
 - Логирование: общий логгер, NullHandler до init, файл рядом с exe (портативность).
 - Документация README/ARCHITECTURE — честно описаны ограничения (HKLM не трогаем, CJK IME, требуется перелогин).
 
@@ -154,7 +154,13 @@ cleaner sees branch:    ('HKCU', 'Keyboard Layout\Preload', ...)   ← реал�
    - **флакающие тесты укреплены** (замечание из п. 2): таймауты PowerShell в cleaner 30→45 с, ctfmon stop/start 15→20 с, `scanner._get_language_list_from_powershell` 15→20 с; поллинг мьютекса в `test_mutex_acquire_with_polling` 1→3 с; задержки в restart-сценарии увеличены;
    - `requirements-dev.in/.txt`: добавлены `ruff` и `pytest-cov`; в `pyproject.toml` — секция `[tool.coverage.run]` (source = main/scanner/cleaner/...);
    - проверка: `ruff check .` — чисто; тесты — **120 passed** (94 unit + 26 live); YAML workflow валиден; `git status` — рабочее дерево чистое.
-6. **(P1)** Согласовать имена sandbox-ключей, дописать de/pt/zh локали, убрать pytest-asyncio и мёртвые фикстуры conftest.
+6. ✅ **(P1) ИСПРАВЛЕНО 13.09.2026 — Согласованы sandbox-ключи, дописаны локали de/pt/zh, удалены pytest-asyncio и мёртвые фикстуры.**
+   Что сделано:
+   - **единый sandbox-ключ `HKCU\Software\KeyboardCleanerTest`**: `test_sandbox.py` (docstring, `TEST_ROOT`, assertion в `test_plan_layout_removal_ignores_sandbox_tree`) и README переведены с `TestLayoutCleaner` на каноническое имя приложения (config.py / help `--sandbox`); в коде старых имён не осталось (только исторические упоминания в этом отчёте);
+   - **локали de/pt/zh доведены до полного набора (179 ключей)**: переведены все 10 недостающих ключей (`chk_block_cloud_sync`, `dlg_result_cloud_sync`, `dlg_result_welcome_sync`, `progress_backup/delete/scan/sync`, `status_sync_block_failed/blocked/unblocked`) сверкой с en/ru; JSON валиден;
+   - **pytest-asyncio удалён** из `requirements-dev.in`/`requirements-dev.txt` (в проекте нет async-кода), вместе с ним — транзитивная `typing-extensions`;
+   - **`conftest.py` удалён**: все его фикстуры/хелперы (`mock_winreg`, `mock_winreg_with_values`, `mock_subprocess_run`, `mock_is_admin_*`, `setup_winreg_mocks`) не использовались ни одним тестом — реальные тесты используют собственный `FakeWinreg`;
+   - проверка: `ruff check .` — чисто; тесты — **120 passed** (94 unit + 26 live); локали — 3×179, валидный JSON.
 7. **(P2)** Добавить `[build-system]`, `__version__`, `noqa`-комментарии, тесты на `_active_lang_cache` и `restore_language_list`.
 
 **Итог:** проект зрелый по домену (работа с реестром/PowerShell продумана), но «опасен по обещаниям»: sandbox-режим, который должен страховать от порчи системы, не страхует главный риск — удаление. Его и тестовую порядкозависимость следует чинить в первую очередь.

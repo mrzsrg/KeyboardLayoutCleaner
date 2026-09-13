@@ -23,14 +23,8 @@ pluggy==1.6.0
 pygments==2.21.0
     # via pytest
 pytest==9.1.1
-    # via
-    #   -r requirements-dev.in
-    #   pytest-asyncio
-pytest-asyncio==1.4.0
     # via -r requirements-dev.in
 pytest-cov==7.1.0
     # via -r requirements-dev.in
 ruff==0.14.13
     # via -r requirements-dev.in
-typing-extensions==4.16.0
-    # via pytest-asyncio

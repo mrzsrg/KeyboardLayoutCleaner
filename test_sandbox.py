@@ -3,7 +3,7 @@ test_sandbox.py — Живые (live) тесты по «Плану тестир�
 
 БЕЗОПАСНОСТЬ:
   Все операции записи/удаления выполняются ТОЛЬКО в тестовом ключе
-  HKCU\Software\TestLayoutCleaner (sandbox-ключ из плана тестирования).
+  HKCU\Software\KeyboardCleanerTest (sandbox-ключ из плана тестирования).
 
   Реальные ветки (Keyboard Layout, CTF, User Profile, HKU\.DEFAULT):
     - читаются только в режиме read-only (сканер, reg export бэкапа);
@@ -34,7 +34,7 @@ import pytest
 import cleaner
 import scanner
 
-TEST_ROOT = "Software\\TestLayoutCleaner"
+TEST_ROOT = "Software\\KeyboardCleanerTest"
 PHANTOM_KLID = "d001dead"  # заведомо несуществующая раскладка
 KLID_RE = re.compile(r"^[0-9a-fA-F]{8}$")
 
@@ -499,7 +499,7 @@ class TestDryRunAndBackupLive(SandboxTestCase):
         plan = cleaner.plan_layout_removal(PHANTOM_KLID)
         preload = plan["branches"]["HKCU\\Keyboard Layout\\Preload"]["values"]
         self.assertEqual(preload, [])
-        self.assertIsNone(plan["branches"].get("HKCU\\Software\\TestLayoutCleaner"))
+        self.assertIsNone(plan["branches"].get("HKCU\\Software\\KeyboardCleanerTest"))
 
     def test_backup_language_list_writes_json(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:

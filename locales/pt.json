@@ -167,5 +167,15 @@
   "dlg_elevation_path_not_found": "Caminho nao encontrado",
   "dlg_elevation_no_assoc": "Nao foi possivel contactar o sistema",
   "dlg_elevation_bad_netpath": "Erro de rede",
-  "dlg_elevation_generic_error": "Erro desconhecido (codigo {code}). Tente novamente"
+  "dlg_elevation_generic_error": "Erro desconhecido (codigo {code}). Tente novamente",
+  "chk_block_cloud_sync": "Bloquear reimportação de layouts da nuvem (OneDrive/Sync)",
+  "dlg_result_cloud_sync": "Sincronização de idiomas na nuvem:",
+  "dlg_result_welcome_sync": "Sincronização da tela de boas-vindas:",
+  "progress_backup": "Criando backup...",
+  "progress_delete": "Excluindo...",
+  "progress_scan": "Verificando...",
+  "progress_sync": "Sincronizando...",
+  "status_sync_block_failed": "Falha ao bloquear a sincronização na nuvem",
+  "status_sync_blocked": "Sincronização de idiomas na nuvem bloqueada",
+  "status_sync_unblocked": "Sincronização na nuvem desbloqueada"
 }

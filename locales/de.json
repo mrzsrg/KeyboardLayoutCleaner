@@ -167,5 +167,15 @@
   "dlg_elevation_path_not_found": "Pfad nicht gefunden",
   "dlg_elevation_no_assoc": "Fehler beim Kontakt mit dem System",
   "dlg_elevation_bad_netpath": "Netzwerkfehler",
-  "dlg_elevation_generic_error": "Unbekannter Fehler (Code {code})"
+  "dlg_elevation_generic_error": "Unbekannter Fehler (Code {code})",
+  "chk_block_cloud_sync": "Erneutes Einspielen von Tastaturlayouts aus der Cloud blockieren (OneDrive/Sync)",
+  "dlg_result_cloud_sync": "Cloud-Sprachsynchronisierung:",
+  "dlg_result_welcome_sync": "Synchronisierung des Anmeldebildschirms:",
+  "progress_backup": "Sicherung wird erstellt...",
+  "progress_delete": "Wird gelöscht...",
+  "progress_scan": "Wird gescannt...",
+  "progress_sync": "Wird synchronisiert...",
+  "status_sync_block_failed": "Cloud-Sprachsynchronisierung konnte nicht blockiert werden",
+  "status_sync_blocked": "Cloud-Sprachsynchronisierung blockiert",
+  "status_sync_unblocked": "Cloud-Synchronisierung entsperrt"
 }

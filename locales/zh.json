@@ -167,5 +167,15 @@
   "dlg_elevation_path_not_found": "路径未找到",
   "dlg_elevation_no_assoc": "无法联系系统",
   "dlg_elevation_bad_netpath": "网络错误",
-  "dlg_elevation_generic_error": "未知错误（代码{code}）。请重试"
+  "dlg_elevation_generic_error": "未知错误（代码{code}）。请重试",
+  "chk_block_cloud_sync": "阻止从云（OneDrive/同步）重新引入布局",
+  "dlg_result_cloud_sync": "云语言同步：",
+  "dlg_result_welcome_sync": "欢迎屏幕同步：",
+  "progress_backup": "正在创建备份...",
+  "progress_delete": "正在删除...",
+  "progress_scan": "正在扫描...",
+  "progress_sync": "正在同步...",
+  "status_sync_block_failed": "阻止云同步失败",
+  "status_sync_blocked": "云语言同步已阻止",
+  "status_sync_unblocked": "云同步已解除阻止"
 }

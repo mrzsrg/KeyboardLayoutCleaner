@@ -1,0 +1,51 @@
+# === Python ===
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+*.egg
+*.whl
+
+# === PyInstaller ===
+build/
+dist/
+*.spec.bak
+manifest
+
+# === pytest ===
+.pytest_cache/
+htmlcov/
+.coverage
+.coverage.*
+coverage.xml
+
+# === Локальные бэкапы (могут содержать чувствительные данные реестра) ===
+backups/
+
+# === Логи ===
+*.log
+
+# === Собранные портативные архивы ===
+*.zip
+*.tar.gz
+*.tar.bz2
+
+# === IDE ===
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# === pip-compile (locked requirements можно и нужно коммитить) ===
+# .in-файлы (источники) — коммитим, .txt (результат) — тоже
+
+# === OS ===
+Thumbs.db
+desktop.ini
+
+# === Локальные настройки (если появятся) ===
+*.local

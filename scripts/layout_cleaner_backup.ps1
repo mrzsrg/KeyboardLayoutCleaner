@@ -5,7 +5,9 @@
 # Запускается из cleaner.py через subprocess.run с параметром:
 #   -OutputPath <путь к .json файлу>
 #
-# Вывод (в stdout): JSON-массив языков (всегда array, даже для 1 языка)
+# Вывод (в stdout): JSON-массив языков (всегда array, даже для 1 языка).
+# ВАЖНО: ConvertTo-Json через pipe разворачивает одиночный элемент в голый
+# объект. Поэтому используется -InputObject: он сохраняет массив всегда.
 
 param(
     [string]$OutputPath
@@ -13,17 +15,15 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-# Получаем список языков и гарантируем, что это массив
+# @(...) гарантирует, что $langs — массив, даже если язык один или ноль
 $langs = @(Get-WinUserLanguageList)
 
-# Формируем массив объектов (даже если язык один)
 $out = @($langs | ForEach-Object {
-    [pscustomobject]@{
+    @{
         LanguageTag = $_.LanguageTag
         InputMethodTips = @($_.InputMethodTips)
     }
 })
 
-# Принудительно оборачиваем в массив и конвертируем в JSON
-[array]$jsonArray = if ($out.Count -eq 0) { @() } else { @($out) }
-$jsonArray | ConvertTo-Json -Depth 4 -Compress
+# -InputObject сохраняет форму массива для любого числа элементов (0/1/N)
+ConvertTo-Json -InputObject $out -Depth 4 -Compress

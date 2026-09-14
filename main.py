@@ -59,7 +59,7 @@ except (ImportError, AttributeError, OSError):
 # ---------------------------------------------------------------------------
 # Импорт из центрального модуля конфигурации
 # ---------------------------------------------------------------------------
-from config import (
+from config import (  # noqa: E402
     __version__ as app_version,
 )
 from config import (  # noqa: E402 — импорты ниже _parse_sandbox_mode намеренны (см. блок на стр. 221)
@@ -150,8 +150,8 @@ if sys.platform != "win32":
 # ---------------------------------------------------------------------------
 # Защита от параллельных запусков (named mutex)
 # ---------------------------------------------------------------------------
-from mutex import acquire_mutex as _mutex_acquire
-from mutex import release_mutex as _mutex_release
+from mutex import acquire_mutex as _mutex_acquire  # noqa: E402
+from mutex import release_mutex as _mutex_release  # noqa: E402
 
 # Алиасы для обратной совместимости с тестами
 _MUTEX_NAME = r"Global\KeyboardLayoutCleaner_{A3F8B2C1-7D4E-4A9B-8C6F-1E2D3F4A5B6C}"
@@ -202,11 +202,7 @@ if not is_ok:
         sys.stderr.write("Ошибка: требуется Windows 10 (build 10240) или новее.\n")
     else:
         if ver is not None:
-            version_str = "Ваша версия: %d.%d (build %d)" % (
-                ver.dwMajorVersion,
-                ver.dwMinorVersion,
-                ver.dwBuildNumber,
-            )
+            version_str = f"Ваша версия: {ver.dwMajorVersion}.{ver.dwMinorVersion} (build {ver.dwBuildNumber})"
         else:
             version_str = "Ваша версия: неизвестна"
         messagebox.showerror(
@@ -240,7 +236,7 @@ from scanner import (  # noqa: E402
 # (они импортируются выше — здесь уже доступны)
 _apply_sandbox_to_modules(SANDBOX_MODE)
 
-import contextlib
+import contextlib  # noqa: E402
 
 import i18n  # noqa: E402
 import ui_theme as theme  # noqa: E402
@@ -2030,7 +2026,7 @@ def main() -> None:
         logger.error("CreateMutexW вернул NULL (error=%d)", last_error)
         if sys.stderr:
             sys.stderr.write(
-                "Ошибка: не удалось создать mutex (GetLastError=%d).\n" % last_error
+                f"Ошибка: не удалось создать mutex (GetLastError={last_error}).\n"
             )
         else:
             try:
@@ -2038,7 +2034,7 @@ def main() -> None:
 
                 messagebox.showerror(
                     "Ошибка",
-                    "Не удалось создать mutex (GetLastError=%d)." % last_error,
+                    f"Не удалось создать mutex (GetLastError={last_error})."
                 )
             except Exception:
                 logger.exception("Не удалось показать messagebox о создании mutex")

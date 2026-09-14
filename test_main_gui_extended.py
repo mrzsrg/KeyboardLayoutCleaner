@@ -120,7 +120,7 @@ def mock_main_window():
 class TestSandboxMode:
     """Tests for sandbox mode functionality."""
 
-    def test_sandbox_enable_disable(self, _mock_dependencies):
+    def test_sandbox_enable_disable(self):
         import config
 
         config.disable_sandbox()
@@ -130,7 +130,7 @@ class TestSandboxMode:
         config.disable_sandbox()
         assert not config.is_sandbox_enabled()
 
-    def test_sandbox_is_thread_safe(self, _mock_dependencies):
+    def test_sandbox_is_thread_safe(self):
         import threading
 
         import config
@@ -140,7 +140,7 @@ class TestSandboxMode:
 
 
 class TestVersionCheck:
-    def test_version_from_metadata(self, _mock_dependencies):
+    def test_version_from_metadata(self):
         import config
 
         assert hasattr(config, "__version__")
@@ -149,14 +149,14 @@ class TestVersionCheck:
 
 
 class TestI18n:
-    def test_t_returns_string(self, _mock_dependencies):
+    def test_t_returns_string(self):
         from gui_widgets import _t
 
         result = _t("app_title")
         assert isinstance(result, str)
         assert len(result) > 0
 
-    def test_t_fallback_on_missing_key(self, _mock_dependencies):
+    def test_t_fallback_on_missing_key(self):
         from gui_widgets import _t
 
         result = _t("__NONEXISTENT_KEY__")
@@ -164,7 +164,7 @@ class TestI18n:
 
 
 class TestScaling:
-    def test_get_dpi_scaling(self, _mock_dependencies):
+    def test_get_dpi_scaling(self):
         import customtkinter as ctk
 
         mock_widget = mock.MagicMock()

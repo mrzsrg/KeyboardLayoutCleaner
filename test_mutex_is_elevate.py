@@ -1,10 +1,6 @@
 """Тесты для новой логики is_elevate в acquire_mutex()."""
 
-import ctypes
-import time
 from unittest.mock import MagicMock, patch
-
-import pytest
 
 
 class TestAcquireMutexIsElevateFalse:
@@ -69,9 +65,11 @@ class TestAcquireMutexIsElevateTrue:
         mock_kernel32.GetLastError.return_value = 183
         mock_kernel32.CreateMutexW.return_value = 42
         mock_ctypes.windll.kernel32 = mock_kernel32
-        with patch("mutex.time.sleep", return_value=None):
-            with patch("mutex.MAX_POLL_ATTEMPTS", 5):
-                handle, err = acquire_mutex("TestMutex123", is_elevate=True)
+        with (
+            patch("mutex.time.sleep", return_value=None),
+            patch("mutex.MAX_POLL_ATTEMPTS", 5),
+        ):
+            handle, err = acquire_mutex("TestMutex123", is_elevate=True)
         assert handle is None
         assert err == 183
         assert mock_kernel32.CreateMutexW.call_count == 6

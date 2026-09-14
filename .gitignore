@@ -1,4 +1,7 @@
 # === Virtual Environment ===
+# Создать: python -m venv .venv
+# Активировать: .venv\Scripts\activate
+# Деактивировать: deactivate
 .venv/
 venv/
 ENV/

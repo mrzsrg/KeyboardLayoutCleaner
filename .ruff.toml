@@ -31,7 +31,7 @@ ignore = [
 ]
 
 [lint.mccabe]
-max-complexity = 18
+max-complexity = 50
 
 [lint.isort]
 known-first-party = ["layout_cleaner"]

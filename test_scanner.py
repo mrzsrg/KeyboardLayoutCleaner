@@ -48,17 +48,6 @@ class _MultiPatch:
             p.stop()
         return False
 
-    def __enter__(self):
-        for p in self._patches:
-            p.start()
-        return self
-
-    def __exit__(self, *exc):
-        for p in self._patches:
-            p.stop()
-        return False
-
-
 def _install_fake_winreg(fake):
     """Патчим winreg в scanner и cleaner единым FakeWinreg-объектом."""
     return _MultiPatch(

@@ -67,7 +67,7 @@ class FakeWinreg:
     def _join(cls, base_path, sub):
         sub = cls._norm(sub)
         return (
-            base_path if not sub else (base_path + "\\\\" + sub if base_path else sub)
+            base_path if not sub else (base_path + "\\" + sub if base_path else sub)
         )
 
     def _infer_type(self, val):
@@ -88,7 +88,7 @@ class FakeWinreg:
 
     def set(self, root, path, values=None, kids=None):
         path = self._norm(path)
-        sep = "\\\\"
+        sep = "\\"
         sub_parts = path.split(sep) if path else []
         cur = ""
         for p in sub_parts:

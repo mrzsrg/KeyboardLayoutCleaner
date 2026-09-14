@@ -123,9 +123,11 @@ def test_set_language_invalid_json() -> None:
     def bad_load(_lang: str) -> dict[str, str]:
         raise ValueError("root is not an object")
 
-    with patch.object(i18n, "_load_file", side_effect=bad_load):
-        with pytest.raises(ValueError, match="root is not an object"):
-            i18n.set_language("ru")
+    with (
+        patch.object(i18n, "_load_file", side_effect=bad_load),
+        pytest.raises(ValueError, match="root is not an object"),
+    ):
+        i18n.set_language("ru")
 
 
 def test_set_language_file_not_found_logs_warning() -> None:

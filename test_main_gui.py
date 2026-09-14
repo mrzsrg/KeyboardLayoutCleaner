@@ -65,10 +65,12 @@ class TestMainFunction:
             app_instance = self
 
         monkeypatch.setattr(main.KeyboardLayoutCleaner, "mainloop", mock_mainloop)
-        with mock.patch.object(main, "_acquire_mutex", return_value=(1, 0)):
-            with mock.patch.object(main, "parse_args") as mock_parse:
-                mock_parse.return_value = mock.MagicMock(sandbox=False)
-                main.main()
+        with (
+            mock.patch.object(main, "_acquire_mutex", return_value=(1, 0)),
+            mock.patch.object(main, "parse_args") as mock_parse,
+        ):
+            mock_parse.return_value = mock.MagicMock(sandbox=False)
+            main.main()
 
         assert app_instance is not None
         assert isinstance(app_instance, main.KeyboardLayoutCleaner)
@@ -83,15 +85,17 @@ class TestMainFunction:
         monkeypatch.setitem(sys.modules, "scanner", mock_scanner)
         monkeypatch.setitem(sys.modules, "cleaner", mock_cleaner)
 
-        with mock.patch.object(main, "_acquire_mutex", return_value=(1, 0)):
-            with mock.patch.object(main, "parse_args") as mock_parse:
-                mock_args = mock.MagicMock()
-                mock_args.sandbox = True
-                mock_parse.return_value = mock_args
-                main.main()
+        with (
+            mock.patch.object(main, "_acquire_mutex", return_value=(1, 0)),
+            mock.patch.object(main, "parse_args") as mock_parse,
+        ):
+            mock_args = mock.MagicMock()
+            mock_args.sandbox = True
+            mock_parse.return_value = mock_args
+            main.main()
 
-                mock_scanner.activate_sandbox.assert_called_once()
-                mock_cleaner.activate_sandbox.assert_called_once()
+        mock_scanner.activate_sandbox.assert_called_once()
+        mock_cleaner.activate_sandbox.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
@@ -480,9 +484,11 @@ class TestRunAsAdmin:
         mock_shell32 = mock.MagicMock()
         mock_shell32.ShellExecuteW.return_value = 42
         monkeypatch.setattr(main_mod.ctypes.windll, "shell32", mock_shell32)
-        with mock.patch.object(main_mod.sys, "exit"):
-            with mock.patch.object(main_mod.threading, "Thread"):
-                app._restart_as_admin()
+        with (
+            mock.patch.object(main_mod.sys, "exit"),
+            mock.patch.object(main_mod.threading, "Thread"),
+        ):
+            app._restart_as_admin()
         mock_shell32.ShellExecuteW.assert_called()
 
 

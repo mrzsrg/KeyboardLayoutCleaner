@@ -1307,10 +1307,19 @@ def restore_language_list(json_path: str | Path) -> bool:
         data = [data]
     entries: list[tuple[str, list[str]]] = []
     for item in data:
-        tag = str(item.get("LanguageTag", "")).strip()
+        raw_tag = item.get("LanguageTag", "")
+        # PowerShell может вернуть LanguageTag массивом (["ru", "en-US"]),
+        # тогда берём первое непустое значение.
+        if isinstance(raw_tag, (list, tuple)):
+            raw_tag = next((t for t in raw_tag if str(t).strip()), "")
+        tag = str(raw_tag).strip()
         if not tag:
             continue
-        tips = [str(t) for t in (item.get("InputMethodTips") or [])]
+        raw_tips = item.get("InputMethodTips") or []
+        # Единичная раскладка может прийти строкой или числом, а не списком.
+        if isinstance(raw_tips, (str, int)):
+            raw_tips = [raw_tips]
+        tips = [str(t) for t in raw_tips]
         entries.append((tag, tips))
     if not entries:
         logger.warning("В %s нет корректных записей языков", path)

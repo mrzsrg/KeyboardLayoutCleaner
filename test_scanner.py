@@ -802,6 +802,32 @@ class TestRestoreLanguageList:
         cmd = captured["cmd"]
         assert "layout_cleaner_restore.ps1" in cmd[-3]  # PS1-файл
 
+    def test_list_language_tag_and_scalar_tip_normalized(self):
+        # PowerShell может вернуть LanguageTag массивом (["ru", "en-US"]),
+        # а одна раскладка — строкой, а не списком.
+        jp = self._write_json(
+            [
+                {
+                    "LanguageTag": ["ru", "en-US"],
+                    "InputMethodTips": "0419:00000419",
+                }
+            ]
+        )
+        captured, fake_run = self._capture_success_run()
+        with mock.patch.object(cleaner, "run_hidden", fake_run):
+            assert cleaner.restore_language_list(jp) is True
+        # Во временный JSON для PS1 попадает первый непустой тег и список раскладок.
+        tmp_json = Path(captured["cmd"][-1])
+        written = json.loads(tmp_json.read_text(encoding="utf-8"))
+        assert written == [["ru", ["0419:00000419"]]]
+
+    def test_empty_list_language_tag_is_skipped(self):
+        jp = self._write_json(
+            [{"LanguageTag": [], "InputMethodTips": ["0409:00000409"]}]
+        )
+        with mock.patch.object(cleaner, "run_hidden", _proc):
+            assert cleaner.restore_language_list(jp) is False
+
     def test_false_without_success_marker(self):
         jp = self._write_json(
             [{"LanguageTag": "en-US", "InputMethodTips": ["0409:00000409"]}]

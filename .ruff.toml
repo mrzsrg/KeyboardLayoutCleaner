@@ -1,0 +1,37 @@
+# === Ruff Configuration ===
+# Keyboard Layout Cleaner — linting rules
+
+target-version = "py310"
+line-length = 88
+
+[lint]
+select = [
+    "E",     # pycodestyle errors
+    "W",     # pycodestyle warnings
+    "F",     # Pyflakes
+    "I",     # isort
+    "N",     # pep8-naming
+    "UP",    # pyupgrade
+    "B",     # flake8-bugbear
+    "SIM",   # flake8-simplify
+    "TCH",   # flake8-type-checking
+    "RUF",   # Ruff-specific rules
+    "C90",   # mccabe complexity
+    "BLE",   # blind-except
+    "T20",   # print statements
+    "PT",    # pytest
+    "LOG",   # logging
+]
+ignore = [
+    "E501",  # line too long (handled by formatter)
+    "SIM108",  # prefer named expressions
+    "RUF001",  # ambiguous-unicode-character-string (false positives for Cyrillic)
+    "RUF002",  # ambiguous-unicode-character-docstring (false positives for Cyrillic)
+    "RUF003",  # ambiguous-unicode-character-comment (false positives for Cyrillic)
+]
+
+[lint.mccabe]
+max-complexity = 18
+
+[lint.isort]
+known-first-party = ["layout_cleaner"]

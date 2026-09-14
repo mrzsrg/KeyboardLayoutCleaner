@@ -121,7 +121,6 @@
   "dlg_restore_failed_langlist": "не удалось восстановить список языков",
   "dlg_restore_see_log": "подробности — в layout_cleaner.log",
   "dlg_backups_read_error": "Не удалось прочитать папку бэкапов:\n{error}",
-  "dlg_no_backups": "Бэкапов пока нет.\n\nОни создаются автоматически при каждом удалении раскладки.\nПапка бэкапов:\n{path}",
   "dlg_elevation_title": "Повышение прав",
   "dlg_elevation_cancelled": "Не удалось запустить процесс с правами администратора (код {code}).\nВозможно, запрос UAC был отклонён.\nПриложение продолжит работу с текущими правами.",
   "dlg_elevation_error": "Не удалось перезапустить от имени администратора:\n{error}",
@@ -178,5 +177,11 @@
   "brightness_bright": "◐ Яркая (130%)",
   "brightness_ultra": "◐ Максимальная (165%)",
   "status_busy_wait": "⏳ Дождитесь завершения текущей операции",
-  "list_row_terminal": "[KBD] {name}  |  записей: {count}"
+  "list_row_terminal": "[KBD] {name}  |  записей: {count}",
+  "tray_show": "Показать окно",
+  "tray_hide": "Скрыть окно",
+  "tray_restart": "Перезапустить как Администратор",
+  "tray_quit": "Выход",
+  "list_col_name": "Имя раскладки",
+  "list_col_type": "Записей"
 }

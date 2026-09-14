@@ -7,16 +7,18 @@ test_applog.py — Регрессия P0-3: NameError в setup_logging.
 штатной деградации в stderr-only.
 """
 
+import contextlib
 import logging
 
-import applog
 import pytest
+
+import applog
 
 
 class _BrokenHandler(logging.Handler):
     """Хендлер, у которого close() всегда падает."""
 
-    def close(self) -> None:  # noqa: D102 — интент ясен из имени
+    def close(self) -> None:
         raise RuntimeError("close failed (регрессия P0-3)")
 
 
@@ -24,10 +26,8 @@ def _restore_handlers(log: logging.Logger, saved: list[logging.Handler]) -> None
     """Вернуть логгеру исходный набор хендлеров (без утечек файла)."""
     for handler in list(log.handlers):
         log.removeHandler(handler)
-        try:
+        with contextlib.suppress(Exception):
             handler.close()
-        except Exception:
-            pass
     for handler in saved:
         log.addHandler(handler)
 

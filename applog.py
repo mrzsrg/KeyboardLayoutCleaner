@@ -9,6 +9,8 @@ logging.getLogger("layout_cleaner"); до вызова setup_logging() у нег
 
 import logging
 import sys
+from contextlib import suppress
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 LOG_FILE_NAME = "layout_cleaner.log"
@@ -34,6 +36,21 @@ def get_logger() -> logging.Logger:
     return logging.getLogger(LOGGER_NAME)
 
 
+def setup_null_handler(logger: logging.Logger) -> None:
+    """
+    Добавить NullHandler логгеру, если у него ещё нет handlers.
+
+    Обеспечивает библиотечное поведение — без побочных эффектов (не печатает
+    в stderr) до вызова setup_logging(). Повторный вызов безопасен.
+
+    Используется в модулях scanner.py, cleaner.py, config.py, i18n.py, ui_theme.py
+    вместо inline-кода с NullHandler — единый источник для всех модулей.
+    """
+    if not logger.handlers:
+        with suppress(RecursionError):
+            logger.addHandler(logging.NullHandler())
+
+
 def setup_logging(log_dir: str | Path | None = None) -> Path:
     """
     Настроить логгер приложения (идемпотентно: повторный вызов
@@ -51,11 +68,11 @@ def setup_logging(log_dir: str | Path | None = None) -> Path:
         log.removeHandler(handler)
         try:
             handler.close()
-        except Exception as exc:
+        except (OSError, RuntimeError):
             # РЕГРЕССИЯ P0-3: раньше здесь было logger.debug — несуществующее
             # имя (локальная переменная называется log) → NameError вместо
             # деградации в stderr-only при сбое handler.close().
-            log.debug("Не удалось закрыть хендлер лога: %s", exc)
+            log.debug("Не удалось закрыть хендлер лога")
 
     formatter = logging.Formatter(
         "%(asctime)s [%(levelname)s] %(message)s", "%Y-%m-%d %H:%M:%S"
@@ -71,10 +88,15 @@ def setup_logging(log_dir: str | Path | None = None) -> Path:
     base = Path(log_dir) if log_dir else get_app_dir()
     log_file = base / LOG_FILE_NAME
     try:
-        file_handler = logging.FileHandler(log_file, encoding="utf-8")
+        file_handler = RotatingFileHandler(
+            log_file,
+            encoding="utf-8",
+            maxBytes=10 * 1024 * 1024,  # 10 MB
+            backupCount=5,
+        )
         file_handler.setFormatter(formatter)
         log.addHandler(file_handler)
-    except OSError as exc:
-        print(f"Не удалось открыть журнал {log_file}: {exc}", file=sys.stderr)
+    except OSError:
+        pass
 
     return log_file

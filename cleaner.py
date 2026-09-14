@@ -7,6 +7,7 @@ cleaner.py — Модуль бэкапа и безопасного удален�
   - delete_layout()   — удаление записей из реестра + синхронизация профиля через PowerShell.
 """
 
+import contextlib
 import ctypes
 import datetime
 import json
@@ -18,20 +19,52 @@ import winreg
 from pathlib import Path
 from typing import Any
 
+import applog
 import scanner
-from scanner import LAYOUT_MAP, _get_preload_keys
-import config as _config
-from config import _SANDBOX_ROOT, is_sandbox_enabled
 from applog import get_app_dir
+from config import _SANDBOX_ROOT, disable_sandbox, enable_sandbox, is_sandbox_enabled
+from scanner import LAYOUT_MAP, _get_preload_keys
 from winproc import run_hidden
 
+# ---------------------------------------------------------------------------
+# Загрузка PowerShell-скриптов из файлов (scripts/*.ps1)
+# ---------------------------------------------------------------------------
+_PS_DIR = Path(__file__).parent / "scripts"
+
 logger = logging.getLogger("layout_cleaner")
-if not logger.handlers:
-    try:
-        logger.addHandler(logging.NullHandler())
-    except RecursionError:
-        # Защита от рекурсии при мокировании в тестах
-        pass
+applog.setup_null_handler(logger)
+
+
+def _load_ps1_script(name: str) -> str:
+    """Загрузить PowerShell-скрипт из scripts/*.ps1.
+
+    Parameters
+    ----------
+    name : str
+        Имя файла без расширения (например, ``layout_cleaner_cleanup``).
+
+    Returns
+    -------
+    str
+        Содержимое файла.
+
+    Raises
+    ------
+    FileNotFoundError
+        Если файл скрипта не найден.
+    """
+    path = _PS_DIR / f"{name}.ps1"
+    if not path.exists():
+        msg = (
+            f"PowerShell-скрипт не найден: {path}. "
+            f"Проверьте, что папка scripts/ существует и содержит {name}.ps1."
+        )
+        logger.error(msg)
+        raise FileNotFoundError(msg)
+    content = path.read_text(encoding="utf-8")
+    logger.debug("Загружен PS1-скрипт: %s (%d байт)", name, len(content))
+    return content
+
 
 # ---------------------------------------------------------------------------
 # Режим песочницы — синхронизируется с scanner.SANDBOX_MODE через config
@@ -79,8 +112,8 @@ _MAX_CLEAN_DEPTH = 6
 # Sandbox-осведомлённые резолверы веток
 # ---------------------------------------------------------------------------
 def _sandbox_active() -> bool:
-    """Активен ли sandbox-режим (scanner-флаг, config-флаг или окружение)."""
-    return bool(getattr(scanner, "SANDBOX_MODE", False)) or is_sandbox_enabled()
+    """Активен ли sandbox-режим (config-флаг или окружение)."""
+    return is_sandbox_enabled()
 
 
 def _affected_branches() -> list[tuple[str, str, str, bool]]:
@@ -141,8 +174,10 @@ _REPORT_FIELD: dict[tuple[str, str], str] = {
     ("HKCU", "Keyboard Layout\\Substitutes"): "hkcu_substitutes_deleted",
     ("HKCU", _INTL_SUBKEY): "hkcu_intl_deleted",
     ("HKCU", _CTF_SUBKEY): "hkcu_ctf_deleted",
-    ("HKCU", "Software\\Microsoft\\Windows\\CurrentVersion\\SettingSync\\Namespace\\Language"):
-        "hkcu_settingsync_deleted",
+    (
+        "HKCU",
+        "Software\\Microsoft\\Windows\\CurrentVersion\\SettingSync\\Namespace\\Language",
+    ): "hkcu_settingsync_deleted",
     ("HKU", ".DEFAULT\\Keyboard Layout\\Preload"): "hku_default_deleted",
 }
 
@@ -156,7 +191,7 @@ def _report_field_for(root: str, subkey: str) -> str:
     # в _SANDBOX_ROOT\test\...), затем общий sandbox-префикс
     for prefix in (_SANDBOX_ROOT + "\\test\\", _SANDBOX_ROOT + "\\"):
         if rel.startswith(prefix):
-            rel = rel[len(prefix):]
+            rel = rel[len(prefix) :]
             break
     for (_r, sk), field in _REPORT_FIELD.items():
         if sk == rel:
@@ -167,6 +202,7 @@ def _report_field_for(root: str, subkey: str) -> str:
 # ---------------------------------------------------------------------------
 # 1. Проверка прав администратора
 # ---------------------------------------------------------------------------
+
 
 def is_admin() -> bool:
     """
@@ -183,6 +219,7 @@ def is_admin() -> bool:
 # ---------------------------------------------------------------------------
 # 2. Экспорт бэкапа реестра в .reg (UTF-16 LE)
 # ---------------------------------------------------------------------------
+
 
 def _export_single_key_via_reg(
     hkey_root: str,
@@ -229,10 +266,15 @@ def _export_single_key_via_reg(
             timeout=15,
         )
         if result.returncode != 0:
-            stderr_tail = (result.stderr or b"").decode("utf-8", errors="replace").strip()[-200:]
+            stderr_tail = (
+                (result.stderr or b"").decode("utf-8", errors="replace").strip()[-200:]
+            )
             logger.warning(
                 "reg export завершился с ошибкой (%s): %s\\%s — %s",
-                result.returncode, hkey_root, subkey_path, stderr_tail,
+                result.returncode,
+                hkey_root,
+                subkey_path,
+                stderr_tail,
             )
         return result.returncode == 0
     except subprocess.TimeoutExpired:
@@ -241,9 +283,7 @@ def _export_single_key_via_reg(
         )
         raise
     except OSError as exc:
-        logger.error(
-            "reg export не запущен (%s): %s\\%s", exc, hkey_root, subkey_path
-        )
+        logger.error("reg export не запущен (%s): %s\\%s", exc, hkey_root, subkey_path)
         raise
 
 
@@ -283,9 +323,7 @@ def backup_registry(
     """
     # Портативный режим: по умолчанию бэкапы кладём рядом с приложением
     # (в собранном .exe — папка с exe, например флешка), а не в cwd.
-    backup_dir_path = (
-        Path(backup_dir) if backup_dir else get_app_dir() / "backups"
-    )
+    backup_dir_path = Path(backup_dir) if backup_dir else get_app_dir() / "backups"
     backup_dir_path.mkdir(parents=True, exist_ok=True)
 
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -321,16 +359,15 @@ def backup_registry(
                 )
             except (subprocess.TimeoutExpired, OSError) as exc:
                 exported = False
-                logger.error(
-                    "Экспорт ветки %s не выполнен: %s", branch_name, exc
-                )
+                logger.error("Экспорт ветки %s не выполнен: %s", branch_name, exc)
                 failed_branches.append(branch_name)
 
             if not exported or not part_file.exists():
                 if exported_branch_names or branch_name not in failed_branches:
                     logger.error(
                         "Бэкап: ветка %s НЕ экспортирована (reg export "
-                        "вернул ошибку или файл пуст)", branch_name,
+                        "вернул ошибку или файл пуст)",
+                        branch_name,
                     )
                 if branch_name not in failed_branches:
                     failed_branches.append(branch_name)
@@ -363,8 +400,8 @@ def backup_registry(
         # НИ ОДНА ветка не экспортирована: файл-заглушка НЕ создаём —
         # удалять записи без возможности отката недопустимо.
         logger.error(
-            "Бэкап не создан: ни одна ветка не экспортирована. "
-            "Проблемные ветки: %s", failed_branches,
+            "Бэкап не создан: ни одна ветка не экспортирована. Проблемные ветки: %s",
+            failed_branches,
         )
         raise BackupError(
             "ни одна ветка реестра не была экспортирована "
@@ -372,9 +409,7 @@ def backup_registry(
         )
 
     if failed_branches:
-        logger.warning(
-            "Бэкап НЕПОЛНЫЙ — не экспортированы ветки: %s", failed_branches
-        )
+        logger.warning("Бэкап НЕПОЛНЫЙ — не экспортированы ветки: %s", failed_branches)
 
     if report is not None:
         report["exported"] = exported_branch_names
@@ -389,6 +424,7 @@ def backup_registry(
 # ---------------------------------------------------------------------------
 # 3. Безопасное удаление раскладки
 # ---------------------------------------------------------------------------
+
 
 def _delete_registry_value(
     root_key: int,
@@ -575,7 +611,9 @@ def _klid_variants(layout_klid: str) -> set[str]:
             return variants
         variants.add(f"{hex_val:08x}")
         variants.add(str(hex_val))
-        if k.isdigit() and k[0] != "0":  # двусмысленно: могла быть десятичная запись HKL
+        if (
+            k.isdigit() and k[0] != "0"
+        ):  # двусмысленно: могла быть десятичная запись HKL
             dec_val = int(k, 10)
             if dec_val <= 0xFFFFFFFF:
                 variants.add(f"{dec_val:08x}")
@@ -615,10 +653,7 @@ def _clean_branch_recursive(
         if tip and tip.group(1).lower() in variants:
             return True
         if match_mode == "substitutes":
-            return (
-                name.strip().lower() in variants
-                or any(v in val_l for v in variants)
-            )
+            return name.strip().lower() in variants or any(v in val_l for v in variants)
         parts = [p.strip().lower() for p in val.split("\\")]
         if (
             name.strip().lower() in variants
@@ -668,7 +703,7 @@ def _clean_branch_recursive(
                                 "Не удалено %s / %s: %s", key_path, name, exc
                             )
                             continue
-                    rel = key_path[len(subkey_path):].lstrip("\\")
+                    rel = key_path[len(subkey_path) :].lstrip("\\")
                     deleted.append(f"{rel}\\{name}" if rel else name)
                 # Подключи
                 sub_idx = 0
@@ -689,9 +724,7 @@ def _clean_branch_recursive(
 def _klid_to_tags(layout_klid: str) -> set[str]:
     """BCP-47-теги, чьей известной раскладкой является ``layout_klid``."""
     klid_norm = layout_klid.strip().lower()
-    return {
-        tag for tag, klid in LAYOUT_MAP.items() if klid.lower() == klid_norm
-    }
+    return {tag for tag, klid in LAYOUT_MAP.items() if klid.lower() == klid_norm}
 
 
 # Формат "LANGID:KLID" (0409:00000409) в User Profile\...\KeyboardLayoutPreload
@@ -781,9 +814,7 @@ def _clean_intl_profile(
         with winreg.OpenKey(root_key, subkey_path, 0, winreg.KEY_READ) as key:
             try:
                 val, vtype = winreg.QueryValueEx(key, "Languages")
-                if vtype == winreg.REG_MULTI_SZ and isinstance(
-                    val, (list, tuple)
-                ):
+                if vtype == winreg.REG_MULTI_SZ and isinstance(val, (list, tuple)):
                     active_langs = {str(x).strip().lower() for x in val}
             except OSError:
                 pass
@@ -901,7 +932,7 @@ def _clean_ctf_profiles(
                         is_profile = True
                     idx += 1
                 if is_profile:
-                    rel = key_path[len(ctf_subkey):].lstrip("\\")
+                    rel = key_path[len(ctf_subkey) :].lstrip("\\")
                     if delete:
                         _delete_subtree(root_key, key_path)
                     doomed.append(f"{rel} <профиль TSF целиком>")
@@ -946,7 +977,7 @@ _CJK_FALLBACK_KLIDS: dict[str, str] = {
 
 def _build_cleanup_script(layout_klid: str, apply: bool = True) -> str:
     """
-    Собрать PowerShell-скрипт, убирающий раскладку из списка языков.
+    Собрать PowerShell-скрипт очистки из файла.
 
     Скрипт изменяет объекты, возвращённые Get-WinUserLanguageList, «на месте»
     (InputMethodTips.Remove) — прочие настройки языка сохраняются, в отличие
@@ -957,76 +988,14 @@ def _build_cleanup_script(layout_klid: str, apply: bool = True) -> str:
     статусом ``DRYRUN`` — это основа dry-run (plan_layout_removal).
 
     Защита от PS-инъекции: KLID обязан быть ровно 8 HEX-символов —
-    ни кавычки, ни спецсимволы PowerShell в него попасть не могут.
+    передаётся через параметр PS, а не через f-string.
     """
     if not re.fullmatch(r"[0-9a-fA-F]{8}", str(layout_klid)):
         raise ValueError(
             f"Некорректный KLID для PS-скрипта: '{layout_klid}'. "
             "Ожидается ровно 8 HEX-символов."
         )
-    cjk_pairs = ";".join(
-        "'" + tag + "'='" + klid + "'" for tag, klid in _CJK_FALLBACK_KLIDS.items()
-    )
-    apply_literal = "$true" if apply else "$false"
-    return f"""
-$ErrorActionPreference = 'Stop'
-$klid = '{layout_klid}'
-$apply = {apply_literal}
-$cjk = @{{{cjk_pairs}}}
-try {{
-    $langs = @(Get-WinUserLanguageList)
-}} catch {{
-    Write-Output 'FAILED: Get-WinUserLanguageList'
-    exit 0
-}}
-$changed = $false
-$kept = New-Object System.Collections.Generic.List[object]
-$report = New-Object System.Collections.Generic.List[string]
-foreach ($l in $langs) {{
-    $tag = $l.LanguageTag
-    $tips = @($l.InputMethodTips)
-    $dropTips = @()
-    foreach ($tip in $tips) {{
-        $drop = $false
-        $parts = $tip -split ':'
-        if ($parts.Count -eq 2 -and $parts[1] -ieq $klid) {{ $drop = $true }}
-        if (-not $drop -and $tip.Contains('{{')) {{
-            $mapped = $cjk[$tag]
-            if ($mapped -and $mapped -ieq $klid) {{ $drop = $true }}
-        }}
-        if ($drop) {{
-            $dropTips += $tip
-            $report.Add('DROP|' + $tag + '|' + $tip)
-        }}
-    }}
-    if ($dropTips.Count -gt 0) {{
-        $changed = $true
-        foreach ($tip in $dropTips) {{ [void]$l.InputMethodTips.Remove($tip) }}
-        if (@($l.InputMethodTips).Count -eq 0) {{
-            $report.Add('REMOVELANG|' + $tag)
-        }} else {{
-            $kept.Add($l)
-        }}
-    }} else {{
-        $kept.Add($l)
-    }}
-}}
-if (-not $changed) {{
-    Write-Output 'NOCHANGE'
-    exit 0
-}}
-foreach ($r in $report) {{ Write-Output $r }}
-if ($kept.Count -eq 0) {{
-    Write-Output 'EMPTY_SKIPPED'
-    exit 0
-}}
-if (-not $apply) {{
-    Write-Output 'DRYRUN'
-    exit 0
-}}
-Set-WinUserLanguageList -LanguageList @($kept) -Force | Out-Null
-Write-Output 'SUCCESS'
-"""
+    return _load_ps1_script("layout_cleaner_cleanup")
 
 
 def _parse_ps_plan(output: str) -> dict[str, list[str]]:
@@ -1050,7 +1019,10 @@ def _run_cleanup_script(
     layout_klid: str, apply: bool = True
 ) -> tuple[bool, str, dict[str, list[str]]]:
     """
-    Выполнить PS-скрипт очистки (apply=True) или его dry-run (apply=False).
+    Выполнить PS1-скрипт очистки (apply=True) или его dry-run (apply=False).
+
+    KLID и флаг apply передаются через параметры PowerShell,
+    а не через интерполяцию — защита от инъекций.
 
     Returns
     -------
@@ -1058,14 +1030,42 @@ def _run_cleanup_script(
         (успех, человеко-читаемый статус/причина ошибки, план изменений).
     """
     empty: dict[str, list[str]] = {"tips_removed": [], "languages_removed": []}
-    script = _build_cleanup_script(layout_klid, apply=apply)
+    script_path = _PS_DIR / "layout_cleaner_cleanup.ps1"
+
     try:
-        result = run_hidden(
-            ["powershell", "-NoProfile", "-Command", script],
-            capture_output=True,
-            text=True,
-            timeout=45,
-        )
+        if apply:
+            result = run_hidden(
+                [
+                    "powershell",
+                    "-NoProfile",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-File",
+                    str(script_path),
+                    "-LayoutKlid",
+                    layout_klid,
+                    "-Apply",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=45,
+            )
+        else:
+            result = run_hidden(
+                [
+                    "powershell",
+                    "-NoProfile",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-File",
+                    str(script_path),
+                    "-LayoutKlid",
+                    layout_klid,
+                ],
+                capture_output=True,
+                text=True,
+                timeout=45,
+            )
     except FileNotFoundError:
         return False, "powershell не найден", dict(empty)
     except subprocess.TimeoutExpired:
@@ -1122,18 +1122,17 @@ def _sync_language_list_via_powershell(
         ok, detail, _plan = _run_cleanup_script(layout_klid, apply=True)
         return ok, detail
 
-    script = r"""
-try {
-    $langs = Get-WinUserLanguageList;
-    Set-WinUserLanguageList $langs -Force;
-    Write-Output "SUCCESS";
-} catch {
-    Write-Output "FAILED: $_";
-}
-"""
+    script_path = _PS_DIR / "layout_cleaner_sync.ps1"
     try:
         result = run_hidden(
-            ["powershell", "-NoProfile", "-Command", script],
+            [
+                "powershell",
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                str(script_path),
+            ],
             capture_output=True,
             text=True,
             timeout=45,
@@ -1156,13 +1155,17 @@ def _stop_ctfmon() -> bool:
     пользовательских данных) — инъекции невозможны; права администратора
     не нужны.
     """
-    script = (
-        "Stop-Process -Name ctfmon -Force -ErrorAction SilentlyContinue; "
-        "Stop-Process -Name TextInputHost -Force -ErrorAction SilentlyContinue"
-    )
+    script_path = _PS_DIR / "layout_cleaner_stop_ctfmon.ps1"
     try:
         result = run_hidden(
-            ["powershell", "-NoProfile", "-Command", script],
+            [
+                "powershell",
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                str(script_path),
+            ],
             capture_output=True,
             text=True,
             timeout=20,
@@ -1182,10 +1185,17 @@ def _start_ctfmon() -> bool:
     служба перечитала уже чистый реестр. Best-effort: при неудаче UI
     советует перезагрузить ПК.
     """
-    script = "Start-Process \"$env:WINDIR\\System32\\ctfmon.exe\""
+    script_path = _PS_DIR / "layout_cleaner_start_ctfmon.ps1"
     try:
         result = run_hidden(
-            ["powershell", "-NoProfile", "-Command", script],
+            [
+                "powershell",
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                str(script_path),
+            ],
             capture_output=True,
             text=True,
             timeout=20,
@@ -1220,9 +1230,12 @@ class CtfmonSuspender:
         _stop_ctfmon()
         return self
 
-    def __exit__(self, exc_type: type[BaseException] | None,
-                 exc_val: BaseException | None,
-                 exc_tb: Any | None) -> None:
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: Any | None,
+    ) -> None:
         _start_ctfmon()
 
 
@@ -1240,17 +1253,20 @@ def _backup_language_list(backup_file: Path) -> str:
     в ``<бэкап>.langlist.json`` — его можно восстановить функцией
     :func:`restore_language_list`.
     """
-    script = (
-        "$langs = Get-WinUserLanguageList; "
-        "$out = @($langs | ForEach-Object { [pscustomobject]@{ "
-        "LanguageTag = $_.LanguageTag; "
-        "InputMethodTips = @($_.InputMethodTips) } }); "
-        "$out | ConvertTo-Json -Depth 4"
-    )
+    script_path = _PS_DIR / "layout_cleaner_backup.ps1"
     json_file = backup_file.with_suffix(".langlist.json")
     try:
         result = run_hidden(
-            ["powershell", "-NoProfile", "-Command", script],
+            [
+                "powershell",
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                str(script_path),
+                "-OutputPath",
+                str(json_file),
+            ],
             capture_output=True,
             text=True,
             timeout=45,
@@ -1300,22 +1316,24 @@ def restore_language_list(json_path: str | Path) -> bool:
         logger.warning("В %s нет корректных записей языков", path)
         return False
 
-    lines = ["$ErrorActionPreference = 'Stop'", "$kept = @()"]
-    for tag, tips in entries:
-        tag_ps = tag.replace("'", "''")
-        lines.append(f"$nl = New-WinUserLanguageList -Language '{tag_ps}'")
-        lines.append("$nl[0].InputMethodTips.Clear()")
-        for tip in tips:
-            tip_ps = tip.replace("'", "''")
-            lines.append(f"[void]$nl[0].InputMethodTips.Add('{tip_ps}')")
-        lines.append("$kept = @($kept) + $nl[0]")
-    lines.append("Set-WinUserLanguageList -LanguageList @($kept) -Force | Out-Null")
-    lines.append('Write-Output "SUCCESS"')
-    script = "\n".join(lines)
+    # Пишем JSON-бэкап в временный файл для PS1-скрипта
+    import tempfile
 
+    tmp_json = Path(tempfile.mktemp(suffix=".json"))
     try:
+        tmp_json.write_text(json.dumps(entries), encoding="utf-8")
+        script_path = _PS_DIR / "layout_cleaner_restore.ps1"
         result = run_hidden(
-            ["powershell", "-NoProfile", "-Command", script],
+            [
+                "powershell",
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                str(script_path),
+                "-JsonPath",
+                str(tmp_json),
+            ],
             capture_output=True,
             text=True,
             timeout=45,
@@ -1336,6 +1354,7 @@ def restore_language_list(json_path: str | Path) -> bool:
 # 2b. Блокировка облачной синхронизации и синхронизация Экрана приветствия
 # ---------------------------------------------------------------------------
 
+
 def _is_language_sync_blocked() -> bool:
     """
     Проверить, заблокирована ли уже синхронизация языков с облаком.
@@ -1346,11 +1365,11 @@ def _is_language_sync_blocked() -> bool:
         True если синхронизация уже отключена, False если не определилось
         или включено.
     """
-    key_path = (
-        r"Software\Microsoft\Windows\CurrentVersion\SettingSync\Groups\Language"
-    )
+    key_path = r"Software\Microsoft\Windows\CurrentVersion\SettingSync\Groups\Language"
     try:
-        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path, 0, winreg.KEY_READ) as key:
+        with winreg.OpenKey(
+            winreg.HKEY_CURRENT_USER, key_path, 0, winreg.KEY_READ
+        ) as key:
             try:
                 result = winreg.QueryValueEx(key, "Enabled")
                 # Защита от моков и некорректных результатов
@@ -1378,9 +1397,7 @@ def disable_language_sync() -> tuple[bool, str]:
     tuple[bool, str]
         (успех, детализированное описание результата/ошибки)
     """
-    key_path = (
-        r"Software\Microsoft\Windows\CurrentVersion\SettingSync\Groups\Language"
-    )
+    key_path = r"Software\Microsoft\Windows\CurrentVersion\SettingSync\Groups\Language"
     # Проверяем текущее состояние перед записью
     if _is_language_sync_blocked():
         logger.info("Синхронизация языков уже отключена — пропускаем запись")
@@ -1419,17 +1436,26 @@ def sync_welcome_screen_settings() -> bool:
     bool
         True если команда выполнена успешно, False при ошибке.
     """
-    script = "Copy-UserInternationalSettingsToSystem -WelcomeScreen $true -NewUser $true"
+    script_path = _PS_DIR / "layout_cleaner_sync_welcome.ps1"
     try:
         res = run_hidden(
-            ["powershell", "-NoProfile", "-Command", script],
+            [
+                "powershell",
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                str(script_path),
+            ],
             capture_output=True,
             text=True,
             timeout=45,  # Увеличено с 15 до 45 сек — на слабом железе операция может занимать до 30 сек
         )
         ok = res.returncode == 0
         if ok:
-            logger.info("Настройки Экрана приветствия обновлены (чистый список языков).")
+            logger.info(
+                "Настройки Экрана приветствия обновлены (чистый список языков)."
+            )
         else:
             logger.warning(
                 "Copy-UserInternationalSettingsToSystem: returncode=%s, stderr=%s",
@@ -1445,6 +1471,7 @@ def sync_welcome_screen_settings() -> bool:
 # ---------------------------------------------------------------------------
 # 2a. Восстановление из бэкапа (.reg + .langlist.json)
 # ---------------------------------------------------------------------------
+
 
 def get_backup_dir() -> Path:
     """Папка бэкапов по умолчанию (рядом с приложением/исходниками)."""
@@ -1505,9 +1532,7 @@ def list_backups(backup_dir: str | Path | None = None) -> list[dict[str, Any]]:
                 "json_path": str(json_file) if json_file.is_file() else "",
                 "name": ts.strftime("%d.%m.%Y %H:%M:%S"),
                 "sections": sections,
-                "has_hku": any(
-                    s.upper().startswith("[HKEY_USERS") for s in sections
-                ),
+                "has_hku": any(s.upper().startswith("[HKEY_USERS") for s in sections),
             }
         )
     return items
@@ -1543,17 +1568,22 @@ def restore_registry_backup(reg_path: str | Path) -> dict[str, Any]:
         pass
 
     if needs_admin and not is_admin():
-        # UAC-запрос на сам импорт; апострофы в пути экранируем для PowerShell
-        ps_path = str(path).replace("'", "''")
-        script = (
-            "$p = Start-Process reg.exe -ArgumentList @('import', "
-            f"'{ps_path}') -Verb RunAs -Wait -PassThru; "
-            "if ($p) { exit $p.ExitCode } else { exit 1 }"
-        )
+        # UAC-запрос на сам импорт; путь к файлу передаётся через параметр PS,
+        # а не через интерполяцию — защита от PS-инъекций
+        script_path = _PS_DIR / "layout_cleaner_reg_import.ps1"
         logger.info("Импорт .reg требует админа — запрашиваю UAC")
         try:
             proc = run_hidden(
-                ["powershell", "-NoProfile", "-Command", script],
+                [
+                    "powershell",
+                    "-NoProfile",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-File",
+                    str(script_path),
+                    "-RegPath",
+                    str(path),
+                ],
                 capture_output=True,
                 text=True,
                 timeout=180,
@@ -1568,10 +1598,9 @@ def restore_registry_backup(reg_path: str | Path) -> dict[str, Any]:
         ok = proc.returncode == 0
         detail = ""
         if not ok:
-            detail = (
-                (proc.stderr or proc.stdout or "").strip()[:200]
-                or "импорт не выполнен (возможно, UAC отклонён)"
-            )
+            detail = (proc.stderr or proc.stdout or "").strip()[
+                :200
+            ] or "импорт не выполнен (возможно, UAC отклонён)"
         logger.info("reg import (UAC) %s: ok=%s", path.name, ok)
         return {
             "ok": ok,
@@ -1599,8 +1628,7 @@ def restore_registry_backup(reg_path: str | Path) -> dict[str, Any]:
     if not ok:
         raw = proc.stderr or proc.stdout or b""
         detail = (
-            raw.decode("utf-8", "replace").strip()[:200]
-            or "reg import вернул ошибку"
+            raw.decode("utf-8", "replace").strip()[:200] or "reg import вернул ошибку"
         )
     logger.info("reg import %s: ok=%s", path.name, ok)
     return {
@@ -1611,9 +1639,7 @@ def restore_registry_backup(reg_path: str | Path) -> dict[str, Any]:
     }
 
 
-def restore_backup(
-    reg_path: str | Path, json_path: str | Path = ""
-) -> dict[str, Any]:
+def restore_backup(reg_path: str | Path, json_path: str | Path = "") -> dict[str, Any]:
     """
     Полный откат удаления раскладки:
       1) импорт .reg (записи реестра);
@@ -1646,10 +1672,8 @@ def _current_preload_klids(admin: bool) -> set[str]:
         key_const = _ROOT_CONST.get(root)
         if key_const is None:
             continue
-        try:
+        with contextlib.suppress(OSError):
             klids |= set(_get_preload_keys(key_const, subkey))
-        except OSError:
-            pass
     return {k for k in klids if re.fullmatch(r"[0-9a-f]{8}", k)}
 
 
@@ -1725,7 +1749,7 @@ def delete_layout(layout_id: str) -> dict[str, Any]:
         "welcome_screen_synced": False,
         "welcome_screen_sync_detail": "",
         "permission_errors": [],  # Ошибки прав доступа при очистке
-        "other_deleted": [],      # Ветки вне стандартного маппинга (sandbox и пр.)
+        "other_deleted": [],  # Ветки вне стандартного маппинга (sandbox и пр.)
     }
 
     # ------------------------------------------------------------------
@@ -1751,9 +1775,7 @@ def delete_layout(layout_id: str) -> dict[str, Any]:
     # ------------------------------------------------------------------
     backup_report: dict[str, list[str]] = {}
     try:
-        result["backup_path"] = backup_registry(
-            paths_to_backup, report=backup_report
-        )
+        result["backup_path"] = backup_registry(paths_to_backup, report=backup_report)
     except BackupError as exc:
         result["backup_ok"] = False
         result["backup_error"] = str(exc)
@@ -1770,9 +1792,7 @@ def delete_layout(layout_id: str) -> dict[str, Any]:
             failed_backup_branches,
         )
 
-    result["langlist_backup_path"] = _backup_language_list(
-        Path(result["backup_path"])
-    )
+    result["langlist_backup_path"] = _backup_language_list(Path(result["backup_path"]))
 
     # ------------------------------------------------------------------
     # Шаг 2: ОСТАНОВКА служб ввода (ctfmon.exe, TextInputHost.exe).
@@ -1795,9 +1815,7 @@ def delete_layout(layout_id: str) -> dict[str, Any]:
             if subkey in _recursive_subkeys():
                 deleted = []
                 if subkey == _ctf_subkey():
-                    profiles = _clean_ctf_profiles(
-                        _ROOT_CONST[root], subkey, layout_id
-                    )
+                    profiles = _clean_ctf_profiles(_ROOT_CONST[root], subkey, layout_id)
                     result["ctf_profiles_deleted"] = (
                         result.get("ctf_profiles_deleted", []) + profiles
                     )
@@ -1813,17 +1831,11 @@ def delete_layout(layout_id: str) -> dict[str, Any]:
                 )
                 if subkey == _intl_subkey():
                     # User Profile: точечная очистка записей KLID
-                    deleted += _clean_intl_profile(
-                        _ROOT_CONST[root], subkey, layout_id
-                    )
+                    deleted += _clean_intl_profile(_ROOT_CONST[root], subkey, layout_id)
             elif mode == "substitutes":
-                deleted = _clean_substitutes_keys(
-                    _ROOT_CONST[root], subkey, layout_id
-                )
+                deleted = _clean_substitutes_keys(_ROOT_CONST[root], subkey, layout_id)
             else:
-                deleted = _clean_preload_keys(
-                    _ROOT_CONST[root], subkey, layout_id
-                )
+                deleted = _clean_preload_keys(_ROOT_CONST[root], subkey, layout_id)
             result[field] = result.get(field, []) + deleted
             if deleted:
                 logger.info(
@@ -1855,12 +1867,13 @@ def delete_layout(layout_id: str) -> dict[str, Any]:
             welcome_synced = sync_welcome_screen_settings()
             result["welcome_screen_synced"] = welcome_synced
             result["welcome_screen_sync_detail"] = (
-                "Обновлено" if welcome_synced
-                else "Не удалось обновить — см. лог"
+                "Обновлено" if welcome_synced else "Не удалось обновить — см. лог"
             )
         else:
             result["welcome_screen_synced"] = False
-            result["welcome_screen_sync_detail"] = "Пропущено (требуются права администратора)"
+            result["welcome_screen_sync_detail"] = (
+                "Пропущено (требуются права администратора)"
+            )
 
         # Шаг 5: Верификация — повторная подчистка того, что служба могла
         # вернуть между шагами 3 и 4.
@@ -1872,13 +1885,25 @@ def delete_layout(layout_id: str) -> dict[str, Any]:
 
     # Сбор информации об ошибках прав доступа
     permission_errors: list[str] = []
-    for branch_path, deleted in [
+    for _branch_path, deleted in [
         ("HKCU\\Keyboard Layout\\Preload", result.get("hkcu_preload_deleted", [])),
-        ("HKCU\\Keyboard Layout\\Substitutes", result.get("hkcu_substitutes_deleted", [])),
-        ("HKCU\\Control Panel\\International\\User Profile", result.get("hkcu_intl_deleted", [])),
+        (
+            "HKCU\\Keyboard Layout\\Substitutes",
+            result.get("hkcu_substitutes_deleted", []),
+        ),
+        (
+            "HKCU\\Control Panel\\International\\User Profile",
+            result.get("hkcu_intl_deleted", []),
+        ),
         ("HKCU\\Software\\Microsoft\\CTF", result.get("hkcu_ctf_deleted", [])),
-        ("HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\SettingSync\\Namespace\\Language", result.get("hkcu_settingsync_deleted", [])),
-        ("HKU\\.DEFAULT\\Keyboard Layout\\Preload", result.get("hku_default_deleted", [])),
+        (
+            "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\SettingSync\\Namespace\\Language",
+            result.get("hkcu_settingsync_deleted", []),
+        ),
+        (
+            "HKU\\.DEFAULT\\Keyboard Layout\\Preload",
+            result.get("hku_default_deleted", []),
+        ),
         ("CTF profiles", result.get("ctf_profiles_deleted", [])),
     ]:
         if not deleted and result["admin_privileges"]:
@@ -1985,9 +2010,7 @@ def plan_layout_removal(layout_id: str) -> dict[str, Any]:
     }
     # Предупредить пользователя, если это последняя оставшаяся раскладка
     current_klids = _current_preload_klids(admin)
-    plan["last_layout_guard"] = (
-        bool(current_klids) and current_klids == {layout_id}
-    )
+    plan["last_layout_guard"] = bool(current_klids) and current_klids == {layout_id}
     logger.info(
         "Dry-run %s: ps=%s, tips=%d, langs=%d",
         layout_id,
@@ -1996,6 +2019,8 @@ def plan_layout_removal(layout_id: str) -> dict[str, Any]:
         len(ps_plan["languages_removed"]),
     )
     return plan
+
+
 # ---------------------------------------------------------------------------
 # CLI entry-point для ручного тестирования
 # ---------------------------------------------------------------------------
@@ -2003,35 +2028,23 @@ if __name__ == "__main__":
     import json
     import sys
 
-    print(f"Admin privileges: {is_admin()}")
-
     if len(sys.argv) > 1:
         klid = sys.argv[1]
     else:
-        print("Usage: python cleaner.py <KLID_HEX>")
-        print("Example: python cleaner.py 00000419")
         sys.exit(1)
 
-    print(f"Deleting layout: {klid}")
     report = delete_layout(klid)
-    print(json.dumps(report, indent=2, ensure_ascii=False))
 
 # ---------------------------------------------------------------------------
-# ����� ���������
+# --- Очистка ---
 # ---------------------------------------------------------------------------
 
 
 def activate_sandbox() -> None:
-    """Активировать sandbox-режим (совместимость со старым API).
-
-    Константы модуля больше НЕ мутируются (источник утечки P0-1): все
-    обращения к веткам идут через sandbox-осведомлённые резолверы
-    (_affected_branches, _intl_subkey, _ctf_subkey, _recursive_subkeys),
-    которые читают флаг из config. Достаточно установить config.SANDBOX_MODE.
-    """
-    _config.SANDBOX_MODE = True
+    """Активировать sandbox-режим (совместимость со старым API)."""
+    enable_sandbox()
 
 
 def deactivate_sandbox() -> None:
     """Выйти из sandbox-режима (используется тестами)."""
-    _config.SANDBOX_MODE = False
+    disable_sandbox()

@@ -20,6 +20,7 @@ test_sandbox.py — Живые (live) тесты по «Плану тестир�
   @pytest.mark.live — тесты с реальным реестром (sandbox)
 """
 
+import contextlib
 import json
 import os
 import re
@@ -102,44 +103,36 @@ class SandboxTestCase(unittest.TestCase):
         _delete_test_tree()
 
 
-
-
 @pytest.mark.live
 class TestScannerDryRun(SandboxTestCase):
     """Чек-лист п.1: сканер на живой системе (только чтение)."""
 
     def test_scan_returns_valid_structure(self) -> None:
         layouts = scanner.scan_keyboard_layouts()
-        self.assertIsInstance(layouts, dict)
+        assert isinstance(layouts, dict)
         for klid, locations in layouts.items():
-            self.assertRegex(klid, KLID_RE)
-            self.assertIsInstance(locations, list)
+            assert re.search(KLID_RE, klid)
+            assert isinstance(locations, list)
             for loc in locations:
-                self.assertIn("path", loc)
-                self.assertIn("value", loc)
-                self.assertTrue(loc["path"])
+                assert "path" in loc
+                assert "value" in loc
+                assert loc["path"]
 
     def test_hex_to_name_mapping(self) -> None:
         name = scanner.get_layout_name("00000409")
-        self.assertNotIn("Layout (", name)  # есть в HKLM на любой Windows
-        self.assertEqual(
-            scanner.get_layout_name(PHANTOM_KLID), "Layout (" + PHANTOM_KLID + ")"
-        )
+        assert "Layout (" not in name  # есть в HKLM на любой Windows
+        assert scanner.get_layout_name(PHANTOM_KLID) == "Layout (" + PHANTOM_KLID + ")"
 
     def test_missing_branches_do_not_crash(self) -> None:
         missing = TEST_ROOT + "\\Definitely\\Missing\\Branch"
-        self.assertEqual(
-            scanner._reg_get_string(winreg.HKEY_CURRENT_USER, missing), {}
-        )
-        self.assertEqual(
-            scanner._get_preload_keys(winreg.HKEY_CURRENT_USER, missing), {}
-        )
+        assert scanner._reg_get_string(winreg.HKEY_CURRENT_USER, missing) == {}
+        assert scanner._get_preload_keys(winreg.HKEY_CURRENT_USER, missing) == {}
 
     def test_powershell_language_list_parsed(self) -> None:
         entries = scanner._get_language_list_from_powershell()
         for entry in entries:
-            self.assertRegex(entry["KeyboardLayoutId"], KLID_RE)
-            self.assertTrue(entry["LanguageTag"])
+            assert re.search(KLID_RE, entry["KeyboardLayoutId"])
+            assert entry["LanguageTag"]
 
 
 @pytest.mark.live
@@ -157,46 +150,42 @@ class TestBackupAndRestore(SandboxTestCase):
                 backup_dir=tmp_dir,
             )
             file = Path(backup_path)
-            self.assertTrue(file.exists())
+            assert file.exists()
             raw = file.read_bytes()
-            self.assertTrue(raw.startswith(b"\xff\xfe"), "нет BOM UTF-16 LE")
+            assert raw.startswith(b"\xff\xfe"), "нет BOM UTF-16 LE"
             text = file.read_text(encoding="utf-16")
             headers = [
                 ln
                 for ln in text.splitlines()
                 if ln.startswith("Windows Registry Editor Version")
             ]
-            self.assertEqual(len(headers), 1)
+            assert len(headers) == 1
             # Регрессия: раньше reg export перезаписывал файл, и в бэкапе
             # оставалась только последняя ветка
-            self.assertIn(
-                "[HKEY_CURRENT_USER\\" + TEST_ROOT + "\\Preload]", text
-            )
-            self.assertIn(
-                "[HKEY_CURRENT_USER\\" + TEST_ROOT + "\\Substitutes]", text
-            )
+            assert "[HKEY_CURRENT_USER\\" + TEST_ROOT + "\\Preload]" in text
+            assert "[HKEY_CURRENT_USER\\" + TEST_ROOT + "\\Substitutes]" in text
 
             # Восстановление: сносим дерево и импортируем бэкап обратно
             _delete_test_tree()
-            self.assertIsNone(_get_test_value("Preload", "2"))
+            assert _get_test_value("Preload", "2") is None
             result = subprocess.run(
                 ["reg", "import", backup_path], capture_output=True, timeout=30
             )
-            self.assertEqual(result.returncode, 0)
-            self.assertEqual(_get_test_value("Preload", "2"), PHANTOM_KLID)
-            self.assertEqual(_get_test_value("Preload", "1"), "00000409")
-            self.assertEqual(_get_test_value("Substitutes", PHANTOM_KLID), "00000409")
+            assert result.returncode == 0
+            assert _get_test_value("Preload", "2") == PHANTOM_KLID
+            assert _get_test_value("Preload", "1") == "00000409"
+            assert _get_test_value("Substitutes", PHANTOM_KLID) == "00000409"
 
     def test_backup_of_missing_branch_does_not_crash(self) -> None:
         """Ветка не существует → BackupError (файл-заглушки больше нет):
         delete_layout обязан отменить удаление, краша нет."""
         with tempfile.TemporaryDirectory() as tmp_dir:
-            with self.assertRaises(cleaner.BackupError):
+            with pytest.raises(cleaner.BackupError):
                 cleaner.backup_registry(
                     [{"root": "HKCU", "subkey": TEST_ROOT + "\\Missing"}],
                     backup_dir=tmp_dir,
                 )
-            self.assertEqual(list(Path(tmp_dir).glob("*.reg")), [])
+            assert list(Path(tmp_dir).glob("*.reg")) == []
 
     def test_restore_via_cleaner_function_roundtrip(self) -> None:
         """Восстановление через restore_registry_backup (без админа, sandbox).
@@ -217,15 +206,13 @@ class TestBackupAndRestore(SandboxTestCase):
                 winreg.KEY_SET_VALUE,
             ) as key:
                 winreg.DeleteValue(key, PHANTOM_KLID)
-            self.assertIsNone(_get_test_value("Substitutes", PHANTOM_KLID))
+            assert _get_test_value("Substitutes", PHANTOM_KLID) is None
 
             result = cleaner.restore_registry_backup(backup_path)
-            self.assertTrue(result["ok"], result.get("detail"))
-            self.assertFalse(result["elevated"])
-            self.assertFalse(result["needs_admin"])
-            self.assertEqual(
-                _get_test_value("Substitutes", PHANTOM_KLID), "00000409"
-            )
+            assert result["ok"], result.get("detail")
+            assert not result["elevated"]
+            assert not result["needs_admin"]
+            assert _get_test_value("Substitutes", PHANTOM_KLID) == "00000409"
 
     def test_list_backups_finds_created_backup(self) -> None:
         """list_backups видит бэкап, созданный backup_registry в sandbox."""
@@ -236,14 +223,13 @@ class TestBackupAndRestore(SandboxTestCase):
                 backup_dir=tmp_dir,
             )
             items = cleaner.list_backups(tmp_dir)
-            self.assertEqual(len(items), 1)
-            self.assertFalse(items[0]["has_hku"])
-            self.assertEqual(items[0]["json_path"], "")
-            self.assertIn(
-                "[HKEY_CURRENT_USER\\" + TEST_ROOT + "\\Preload]",
-                items[0]["sections"],
+            assert len(items) == 1
+            assert not items[0]["has_hku"]
+            assert items[0]["json_path"] == ""
+            assert (
+                "[HKEY_CURRENT_USER\\" + TEST_ROOT + "\\Preload]"
+                in items[0]["sections"]
             )
-
 
 
 @pytest.mark.live
@@ -265,9 +251,7 @@ class TestIntlProfileCleanup(SandboxTestCase):
             0,
             winreg.KEY_SET_VALUE,
         ) as key:
-            winreg.SetValueEx(
-                key, "Languages", 0, winreg.REG_MULTI_SZ, langs
-            )
+            winreg.SetValueEx(key, "Languages", 0, winreg.REG_MULTI_SZ, langs)
         with winreg.CreateKeyEx(
             winreg.HKEY_CURRENT_USER,
             TEST_ROOT + "\\" + profile + "\\en-GB",
@@ -296,12 +280,10 @@ class TestIntlProfileCleanup(SandboxTestCase):
             winreg.HKEY_CURRENT_USER, TEST_ROOT + "\\" + profile, "00000809"
         )
         # Привязка KLID удалена, про запас сообщения отличаются
-        self.assertTrue(
-            any(d.startswith("en-GB\\") for d in deleted)
-        )
+        assert any(d.startswith("en-GB\\") for d in deleted)
         # Профиль языка СОХРАНЁН (язык активен) и Languages не тронуты
-        self.assertTrue(_key_exists(profile + "\\en-GB"))
-        self.assertTrue(_key_exists(profile + "\\en-US"))
+        assert _key_exists(profile + "\\en-GB")
+        assert _key_exists(profile + "\\en-US")
         with winreg.OpenKey(
             winreg.HKEY_CURRENT_USER,
             TEST_ROOT + "\\" + profile,
@@ -309,7 +291,7 @@ class TestIntlProfileCleanup(SandboxTestCase):
             winreg.KEY_READ,
         ) as key:
             langs = winreg.QueryValueEx(key, "Languages")[0]
-        self.assertEqual(list(langs), ["en-US", "en-GB"])
+        assert list(langs) == ["en-US", "en-GB"]
 
     def test_delete_removes_empty_inactive_profile(self) -> None:
         """Если en-GB НЕ активен (нет в Languages) и после точечной
@@ -318,8 +300,8 @@ class TestIntlProfileCleanup(SandboxTestCase):
         cleaner._clean_intl_profile(
             winreg.HKEY_CURRENT_USER, TEST_ROOT + "\\" + profile, "00000809"
         )
-        self.assertFalse(_key_exists(profile + "\\en-GB"))
-        self.assertTrue(_key_exists(profile + "\\en-US"))
+        assert not _key_exists(profile + "\\en-GB")
+        assert _key_exists(profile + "\\en-US")
 
     def test_dry_run_does_not_modify(self) -> None:
         profile = self._build_mini_profile()
@@ -329,18 +311,18 @@ class TestIntlProfileCleanup(SandboxTestCase):
             "00000809",
             delete=False,
         )
-        self.assertTrue(deleted)
-        self.assertTrue(_key_exists(profile + "\\en-GB"))
-        self.assertTrue(_key_exists(profile + "\\en-US"))
+        assert deleted
+        assert _key_exists(profile + "\\en-GB")
+        assert _key_exists(profile + "\\en-US")
 
     def test_unknown_klid_is_noop(self) -> None:
         profile = self._build_mini_profile()
         deleted = cleaner._clean_intl_profile(
             winreg.HKEY_CURRENT_USER, TEST_ROOT + "\\" + profile, "d001dead"
         )
-        self.assertEqual(deleted, [])
-        self.assertTrue(_key_exists(profile + "\\en-GB"))
-        self.assertTrue(_key_exists(profile + "\\en-US"))
+        assert deleted == []
+        assert _key_exists(profile + "\\en-GB")
+        assert _key_exists(profile + "\\en-US")
 
 
 @pytest.mark.live
@@ -355,13 +337,11 @@ class TestScannerDeepScan(SandboxTestCase):
             0,
             winreg.KEY_SET_VALUE,
         ) as key:
-            winreg.SetValueEx(
-                key, "KeyboardLayout", 0, winreg.REG_SZ, "d001dead"
-            )
+            winreg.SetValueEx(key, "KeyboardLayout", 0, winreg.REG_SZ, "d001dead")
         found = scanner._scan_branch_recursive(
             winreg.HKEY_CURRENT_USER, TEST_ROOT + "\\ScanRec"
         )
-        self.assertIn(("A\\B\\C\\KeyboardLayout", "d001dead"), found)
+        assert ("A\\B\\C\\KeyboardLayout", "d001dead") in found
 
     def test_recursive_scan_tip_format(self) -> None:
         with winreg.CreateKeyEx(
@@ -376,14 +356,14 @@ class TestScannerDeepScan(SandboxTestCase):
         found = scanner._scan_branch_recursive(
             winreg.HKEY_CURRENT_USER, TEST_ROOT + "\\ScanRec2"
         )
-        self.assertIn(("Sub\\InputMethodOverride", "00000809"), found)
+        assert ("Sub\\InputMethodOverride", "00000809") in found
 
     def test_recursive_scan_missing_branch(self) -> None:
-        self.assertEqual(
+        assert (
             scanner._scan_branch_recursive(
                 winreg.HKEY_CURRENT_USER, TEST_ROOT + "\\Missing"
-            ),
-            [],
+            )
+            == []
         )
 
     def test_substitutes_case_normalized(self) -> None:
@@ -397,7 +377,7 @@ class TestScannerDeepScan(SandboxTestCase):
         subs = scanner._scan_substitutes(
             winreg.HKEY_CURRENT_USER, TEST_ROOT + "\\SubsCase"
         )
-        self.assertEqual(subs.get("d001dead", {}).get("target"), "00000409")
+        assert subs.get("d001dead", {}).get("target") == "00000409"
 
 
 @pytest.mark.live
@@ -405,22 +385,22 @@ class TestPermissionsSafety(SandboxTestCase):
     """Чек-лист п.3: поведение без админ-прав (без крашей)."""
 
     def test_is_admin_returns_bool(self) -> None:
-        self.assertIsInstance(cleaner.is_admin(), bool)
+        assert isinstance(cleaner.is_admin(), bool)
 
     def test_missing_or_denied_keys_are_not_fatal(self) -> None:
-        self.assertEqual(
+        assert (
             cleaner._clean_preload_keys(
                 winreg.HKEY_CURRENT_USER, TEST_ROOT + "\\Missing", PHANTOM_KLID
-            ),
-            [],
+            )
+            == []
         )
         # HKU\.DEFAULT: без админ-прав — PermissionError, с правами — просто
         # нет совпадений. Оба пути обязаны вернуть [] без исключений.
-        self.assertEqual(
+        assert (
             cleaner._clean_preload_keys(
                 winreg.HKEY_USERS, ".DEFAULT\\Keyboard Layout\\Preload", PHANTOM_KLID
-            ),
-            [],
+            )
+            == []
         )
 
 
@@ -433,15 +413,15 @@ class TestPhantomDeletionSimulation(SandboxTestCase):
         deleted = cleaner._clean_preload_keys(
             winreg.HKEY_CURRENT_USER, TEST_ROOT + "\\Preload", PHANTOM_KLID
         )
-        self.assertEqual(deleted, ["2"])
-        self.assertIsNone(_get_test_value("Preload", "2"))
-        self.assertEqual(_get_test_value("Preload", "1"), "00000409")
+        assert deleted == ["2"]
+        assert _get_test_value("Preload", "2") is None
+        assert _get_test_value("Preload", "1") == "00000409"
 
         deleted_subst = cleaner._clean_substitutes_keys(
             winreg.HKEY_CURRENT_USER, TEST_ROOT + "\\Substitutes", PHANTOM_KLID
         )
-        self.assertEqual(deleted_subst, [PHANTOM_KLID])
-        self.assertIsNone(_get_test_value("Substitutes", PHANTOM_KLID))
+        assert deleted_subst == [PHANTOM_KLID]
+        assert _get_test_value("Substitutes", PHANTOM_KLID) is None
 
     def test_delete_layout_end_to_end_noop_on_real_system(self) -> None:
         """Полный конвейер delete_layout с фантомным KLID.
@@ -457,26 +437,22 @@ class TestPhantomDeletionSimulation(SandboxTestCase):
                 created_backups.append(report["backup_path"])
             if report.get("langlist_backup_path"):
                 created_backups.append(report["langlist_backup_path"])
-            self.assertTrue(report["backup_path"])
-            self.assertTrue(Path(report["backup_path"]).exists())
-            self.assertFalse(report["success"])  # фантом в системе отсутствует
-            self.assertEqual(report["hkcu_preload_deleted"], [])
-            self.assertEqual(report["hkcu_substitutes_deleted"], [])
-            self.assertEqual(report["hkcu_ctf_deleted"], [])
-            self.assertEqual(report["hkcu_intl_deleted"], [])
-            self.assertEqual(report["hku_default_deleted"], [])
+            assert report["backup_path"]
+            assert Path(report["backup_path"]).exists()
+            assert not report["success"]  # фантом в системе отсутствует
+            assert report["hkcu_preload_deleted"] == []
+            assert report["hkcu_substitutes_deleted"] == []
+            assert report["hkcu_ctf_deleted"] == []
+            assert report["hkcu_intl_deleted"] == []
+            assert report["hku_default_deleted"] == []
             # Синхронизация отработала без изменения профиля (NOCHANGE)
-            self.assertTrue(report["power_sync"])
-            self.assertEqual(report["power_sync_detail"], "NOCHANGE")
-            self.assertIn("langlist_backup_path", report)
+            assert report["power_sync"]
+            assert report["power_sync_detail"] == "NOCHANGE"
+            assert "langlist_backup_path" in report
         finally:
             for p in created_backups:
-                try:
+                with contextlib.suppress(OSError):
                     os.remove(p)
-                except OSError:
-                    pass
-
-
 
 
 @pytest.mark.live
@@ -485,30 +461,30 @@ class TestDryRunAndBackupLive(SandboxTestCase):
 
     def test_plan_layout_removal_phantom(self) -> None:
         plan = cleaner.plan_layout_removal(PHANTOM_KLID)
-        self.assertEqual(plan["klid"], PHANTOM_KLID)
-        self.assertIn("HKCU\\Keyboard Layout\\Preload", plan["branches"])
-        self.assertEqual(len(plan["branches"]), 6)
+        assert plan["klid"] == PHANTOM_KLID
+        assert "HKCU\\Keyboard Layout\\Preload" in plan["branches"]
+        assert len(plan["branches"]) == 6
         # PowerShell-анализ доступен; фантома в списке языков нет
-        self.assertTrue(plan["ps"]["available"])
-        self.assertEqual(plan["ps"]["detail"], "NOCHANGE")
-        self.assertFalse(plan["ps"]["tips_removed"])
+        assert plan["ps"]["available"]
+        assert plan["ps"]["detail"] == "NOCHANGE"
+        assert not plan["ps"]["tips_removed"]
 
     def test_plan_layout_removal_ignores_sandbox_tree(self) -> None:
         """План затрагивает только реальные ветки: sandbox-ключ не попадает."""
         _create_test_tree()
         plan = cleaner.plan_layout_removal(PHANTOM_KLID)
         preload = plan["branches"]["HKCU\\Keyboard Layout\\Preload"]["values"]
-        self.assertEqual(preload, [])
-        self.assertIsNone(plan["branches"].get("HKCU\\Software\\KeyboardCleanerTest"))
+        assert preload == []
+        assert plan["branches"].get("HKCU\\Software\\KeyboardCleanerTest") is None
 
     def test_backup_language_list_writes_json(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             fake = Path(tmp_dir) / "backup.reg"
             fake.write_bytes(b"\\xff\\xfe")
             json_path = cleaner._backup_language_list(fake)
-            self.assertTrue(json_path)
+            assert json_path
             data = json.loads(Path(json_path).read_text(encoding="utf-8"))
-            self.assertIsInstance(data, list)
+            assert isinstance(data, list)
 
 
 @pytest.mark.live
@@ -527,17 +503,13 @@ class TestCtfProfileCleanup(SandboxTestCase):
         with winreg.CreateKeyEx(
             winreg.HKEY_CURRENT_USER, phantom, 0, winreg.KEY_SET_VALUE
         ) as key:
-            winreg.SetValueEx(
-                key, "KeyboardLayout", 0, winreg.REG_DWORD, 68748313
-            )
+            winreg.SetValueEx(key, "KeyboardLayout", 0, winreg.REG_DWORD, 68748313)
         # Легитимный сосед того же языка (0x409 → decimal 1033)
         legit = base + "\\Assemblies\\0x00000419\\" + self.LEGIT_GUID
         with winreg.CreateKeyEx(
             winreg.HKEY_CURRENT_USER, legit, 0, winreg.KEY_SET_VALUE
         ) as key:
-            winreg.SetValueEx(
-                key, "KeyboardLayout", 0, winreg.REG_DWORD, 0x00000409
-            )
+            winreg.SetValueEx(key, "KeyboardLayout", 0, winreg.REG_DWORD, 0x00000409)
         # Запись SortOrder на ГЛУБИНЕ 5: ...\{GUID}\00000000\KLID
         deep = (
             base
@@ -553,24 +525,18 @@ class TestCtfProfileCleanup(SandboxTestCase):
 
     def test_scanner_normalizes_decimal_hkl_and_reaches_depth5(self) -> None:
         base = self._build_ctf_sim()
-        found = dict(
-            scanner._scan_branch_recursive(winreg.HKEY_CURRENT_USER, base)
-        )
+        found = dict(scanner._scan_branch_recursive(winreg.HKEY_CURRENT_USER, base))
         # decimal KeyboardLayout приведён к каноническому hex-KLID
-        self.assertEqual(
-            found.get(
-                "Assemblies\\0x00000419\\%s\\KeyboardLayout"
-                % self.PHANTOM_GUID
-            ),
-            "04190419",
+        assert (
+            found.get(f"Assemblies\\0x00000419\\{self.PHANTOM_GUID}\\KeyboardLayout")
+            == "04190419"
         )
         # значение на глубине 5 (...\{GUID}\00000000\KLID) теперь видно
         deep_path = (
-            "SortOrder\\AssemblyItem\\0x00000419\\%s\\00000000\\KLID"
-            % self.DEEP_GUID
+            f"SortOrder\\AssemblyItem\\0x00000419\\{self.DEEP_GUID}\\00000000\\KLID"
         )
-        self.assertIn(deep_path, found)
-        self.assertEqual(found[deep_path], "04190419")
+        assert deep_path in found
+        assert found[deep_path] == "04190419"
 
     def test_profile_keys_deleted_entirely(self) -> None:
         base = self._build_ctf_sim()
@@ -578,44 +544,29 @@ class TestCtfProfileCleanup(SandboxTestCase):
             winreg.HKEY_CURRENT_USER, base, "04190419"
         )
         profiles = [d for d in deleted if "профиль TSF целиком" in d]
-        self.assertEqual(len(profiles), 2)
+        assert len(profiles) == 2
         # фантомный {GUID} удалён ЦЕЛИКОМ (вместе с подключами)
-        self.assertFalse(
-            _key_exists("CTFsim\\Assemblies\\0x00000419\\" + self.PHANTOM_GUID)
-        )
-        self.assertFalse(
-            _key_exists(
-                "CTFsim\\SortOrder\\AssemblyItem\\0x00000419\\"
-                + self.DEEP_GUID
-            )
+        assert not _key_exists("CTFsim\\Assemblies\\0x00000419\\" + self.PHANTOM_GUID)
+        assert not _key_exists(
+            "CTFsim\\SortOrder\\AssemblyItem\\0x00000419\\" + self.DEEP_GUID
         )
         # легитимный сосед (KeyboardLayout=0x409) не тронут
-        self.assertTrue(
-            _key_exists("CTFsim\\Assemblies\\0x00000419\\" + self.LEGIT_GUID)
-        )
+        assert _key_exists("CTFsim\\Assemblies\\0x00000419\\" + self.LEGIT_GUID)
         # опустевшие родители удалены, а родитель с «легитимным» профилем — нет
-        self.assertFalse(
-            _key_exists("CTFsim\\SortOrder\\AssemblyItem\\0x00000419")
-        )
-        self.assertTrue(_key_exists("CTFsim\\Assemblies\\0x00000419"))
+        assert not _key_exists("CTFsim\\SortOrder\\AssemblyItem\\0x00000419")
+        assert _key_exists("CTFsim\\Assemblies\\0x00000419")
 
     def test_dry_run_deletes_nothing(self) -> None:
         base = self._build_ctf_sim()
         found = cleaner._clean_ctf_profiles(
             winreg.HKEY_CURRENT_USER, base, "04190419", delete=False
         )
-        self.assertEqual(
-            len([d for d in found if "профиль TSF целиком" in d]), 2
-        )
-        self.assertTrue(
-            _key_exists("CTFsim\\Assemblies\\0x00000419\\" + self.PHANTOM_GUID)
-        )
-        self.assertTrue(
-            _key_exists(
-                "CTFsim\\SortOrder\\AssemblyItem\\0x00000419\\"
-                + self.DEEP_GUID
-                + "\\00000000"
-            )
+        assert len([d for d in found if "профиль TSF целиком" in d]) == 2
+        assert _key_exists("CTFsim\\Assemblies\\0x00000419\\" + self.PHANTOM_GUID)
+        assert _key_exists(
+            "CTFsim\\SortOrder\\AssemblyItem\\0x00000419\\"
+            + self.DEEP_GUID
+            + "\\00000000"
         )
 
 

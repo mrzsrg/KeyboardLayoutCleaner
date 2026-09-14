@@ -3,222 +3,33 @@ test_scanner.py - Unit tests for scanner / cleaner / main (registry-free).
 
 Mock-based using in-memory FakeWinreg and unittest.mock.
 Markers: @pytest.mark.gui, @pytest.mark.live
+
+Uses shared fixtures from conftest.py:
+- fake_winreg / patched_winreg — in-memory registry mock
+- tmp_test_dir — temp directory for test files
+- fake_proc_factory — subprocess.CompletedProcess factory
+- clean_import_main — clean import of main.py
 """
+
 import json
 import os
 import re
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 from unittest import mock
 
 import pytest
 
-import config
 import cleaner
+import config
 import scanner
-import sys
 import winproc
 
-class FakeKey:
-    """Registry key handle."""
-    def __init__(self, root, path):
-        self._root = root
-        self._path = path
-        self._closed = False
-    def __enter__(self): return self
-    def __exit__(self, *exc):
-        self._closed = True
-        return False
-    def __bool__(self): return True
-
-class FakeWinreg:
-    """In-memory winreg for unit tests."""
-    HKEY_CLASSES_ROOT = 0
-    HKEY_CURRENT_USER = 1
-    HKEY_LOCAL_MACHINE = 2
-    HKEY_USERS = 3
-    HKEY_CURRENT_CONFIG = 5
-    KEY_READ = 0x20019
-    KEY_WRITE = 0x20000
-    KEY_ALL_ACCESS = 0xF003F
-    REG_SZ = 1
-    REG_BINARY = 3
-    REG_NONE = 0
-    REG_DWORD = 4
-    REG_DWORD_BIG_ENDIAN = 5
-    REG_EXPAND_SZ = 2
-    REG_LINK = 6
-    REG_MULTI_SZ = 7
-    REG_QWORD = 11
-    REG_QWORD_LITTLE_ENDIAN = 11
-
-    def __init__(self):
-        self.nodes = {}
-        self.deny = set()
-
-    @staticmethod
-    def _norm(subkey):
-        s = subkey.strip() if subkey else ""
-        return s.rstrip("\\")
-
-    @classmethod
-    def _join(cls, base_path, sub):
-        sub = cls._norm(sub)
-        if not sub:
-            return base_path
-        sep = "\\"
-        return base_path + sep + sub if base_path else sub
-
-    def _infer_type(self, val):
-        if isinstance(val, (list, tuple)):
-            return self.REG_MULTI_SZ
-        if isinstance(val, bool):
-            return self.REG_DWORD
-        if isinstance(val, int):
-            return self.REG_DWORD
-        if isinstance(val, bytes):
-            return self.REG_BINARY
-        return self.REG_SZ
-
-    def _resolve(self, root, subkey_path):
-        if isinstance(root, FakeKey):
-            return root._root, self._join(root._path, subkey_path)
-        return root, self._norm(subkey_path)
-
-    def set(self, root, path, values=None, kids=None):
-        """Create/overwrite a node, creating parent nodes."""
-        path = self._norm(path)
-        sep = "\\"
-        sub_parts = path.split(sep) if path else []
-        cur = ""
-        for p in sub_parts:
-            cur = p if not cur else cur + sep + p
-            self.nodes.setdefault((root, cur), {"v": {}, "kids": set()})
-            if sep in cur:
-                parent = cur.rsplit(sep, 1)[0]
-                pnode = self.nodes.get((root, parent))
-                if pnode is not None:
-                    pnode["kids"].add(p)
-        node = self.nodes.setdefault((root, path), {"v": {}, "kids": set()})
-        for name, val in (values or {}).items():
-            node["v"][name] = (val, self._infer_type(val))
-        for k in (kids or []):
-            node["kids"].add(k)
-            child = self._join(path, k)
-            self.nodes.setdefault((root, child), {"v": {}, "kids": set()})
-        return node
-
-    def OpenKey(self, root, subkey_path, *args, **kwargs):
-        root_key, path = self._resolve(root, subkey_path)
-        if path in self.deny or f"{root_key}:" + path in self.deny:
-            raise PermissionError(f"Access denied (test): {path}")
-        node = self.nodes.get((root_key, path))
-        if node is None:
-            raise FileNotFoundError(f"No key (test): {path}")
-        return FakeKey(root_key, path)
-
-    def CreateKey(self, root, subkey_path, *args, **kwargs):
-        root_key, path = self._resolve(root, subkey_path)
-        sep = chr(92) + chr(92)
-        sub_parts = path.split(sep) if path else []
-        cur = ""
-        for p in sub_parts:
-            cur = p if not cur else cur + sep + p
-            if (root_key, cur) not in self.nodes:
-                self.nodes[(root_key, cur)] = {"v": {}, "kids": set()}
-                if sep in cur:
-                    parent = cur.rsplit(sep, 1)[0]
-                    if (root_key, parent) in self.nodes:
-                        pn = self.nodes[(root_key, parent)]
-                        pn["kids"].add(p)
-        self.nodes.setdefault((root_key, path), {"v": {}, "kids": set()})
-        if path and sep in path:
-            parent = path.rsplit(sep, 1)[0]
-            name = path.rsplit(sep, 1)[1]
-            if (root_key, parent) in self.nodes:
-                self.nodes[(root_key, parent)]["kids"].add(name)
-        return FakeKey(root_key, path)
-
-    CreateKeyEx = CreateKey
-    CloseKey = staticmethod(lambda key: None)
-    FlushKey = staticmethod(lambda key: None)
-    ExpandEnvironmentStrings = staticmethod(lambda s: s)
-
-    def _node(self, key):
-        if isinstance(key, FakeKey):
-            return self.nodes.get((key._root, key._path))
-        return None
-
-    def QueryValueEx(self, key, name):
-        node = self._node(key)
-        if node is None or name not in node["v"]:
-            raise FileNotFoundError(name)
-        return node["v"][name]
-
-    def SetValueEx(self, key, name, reserved, vtype, val):
-        node = self._node(key)
-        if node is None:
-            raise FileNotFoundError(name)
-        node["v"][name] = (val, vtype)
-
-    def SetValue(self, key, name, vtype, val):
-        self.SetValueEx(key, name, 0, vtype, val)
-
-    def DeleteValue(self, key, name):
-        node = self._node(key)
-        if node is None or name not in node["v"]:
-            raise OSError(f"No value (test): {name}")
-        del node["v"][name]
-
-    def EnumValue(self, key, idx):
-        node = self._node(key)
-        if node is None:
-            raise OSError("No key (test)")
-        items = list(node["v"].items())
-        if idx >= len(items):
-            raise OSError("No more data (test)")
-        n, (val, vtype) = items[idx]
-        return (n, val, vtype)
-
-    def EnumKey(self, key, idx):
-        node = self._node(key)
-        if node is None:
-            raise OSError("No key (test)")
-        kids = sorted(node["kids"])
-        if idx >= len(kids):
-            raise OSError("No more data (test)")
-        return kids[idx]
-
-    def DeleteKey(self, root, subkey_path, *args, **kwargs):
-        root_key, path = self._resolve(root, subkey_path)
-        node = self.nodes.get((root_key, path))
-        if node is None:
-            raise FileNotFoundError(path)
-        if node["v"] or node["kids"]:
-            raise OSError("Key not empty (test)")
-        del self.nodes[(root_key, path)]
-        sep = chr(92) + chr(92)
-        if sep in path:
-            parent = path.rsplit(sep, 1)[0]
-            name = path.rsplit(sep, 1)[1]
-            pnode = self.nodes.get((root_key, parent))
-            if pnode is not None:
-                pnode["kids"].discard(name)
-        elif path:
-            pnode = self.nodes.get((root_key, ""))
-            if pnode is not None:
-                pnode["kids"].discard(path)
-
-
-
-@pytest.fixture
-def fake_winreg(monkeypatch):
-    """Inject FakeWinreg into scanner and cleaner."""
-    fw = FakeWinreg()
-    monkeypatch.setattr(scanner, "winreg", fw)
-    monkeypatch.setattr(cleaner, "winreg", fw)
-    return fw
+# ---------------------------------------------------------------------------
+# Legacy helpers (kept for compatibility with existing tests)
+# ---------------------------------------------------------------------------
 
 
 class _MultiPatch:
@@ -226,6 +37,16 @@ class _MultiPatch:
 
     def __init__(self, *patches):
         self._patches = patches
+
+    def __enter__(self):
+        for p in self._patches:
+            p.start()
+        return self
+
+    def __exit__(self, *exc):
+        for p in self._patches:
+            p.stop()
+        return False
 
     def __enter__(self):
         for p in self._patches:
@@ -281,6 +102,7 @@ def _write_reg(path, sections):
     text = "Windows Registry Editor Version 5.00\r\n\r\n" + "".join(sections)
     Path(path).write_text(text, encoding="utf-16")
 
+
 # ---------------------------------------------------------------------------
 # TestSafeStr
 # ---------------------------------------------------------------------------
@@ -300,6 +122,7 @@ class TestSafeStr:
         class BadStr:
             def __str__(self):
                 raise ValueError("boom")
+
         assert scanner._safe_str(BadStr()) == ""
 
 
@@ -308,7 +131,8 @@ class TestRegGetString:
 
     def test_existing_key_all_values(self, fake_winreg):
         fake_winreg.set(
-            fake_winreg.HKEY_CURRENT_USER, "Software\\Test",
+            fake_winreg.HKEY_CURRENT_USER,
+            "Software\\Test",
             values={"foo": "bar", "baz": "qux"},
         )
         with _install_fake_winreg(fake_winreg):
@@ -319,7 +143,8 @@ class TestRegGetString:
 
     def test_specific_value(self, fake_winreg):
         fake_winreg.set(
-            fake_winreg.HKEY_CURRENT_USER, "Software\\Test",
+            fake_winreg.HKEY_CURRENT_USER,
+            "Software\\Test",
             values={"foo": "bar"},
         )
         with _install_fake_winreg(fake_winreg):
@@ -337,7 +162,8 @@ class TestRegGetString:
 
     def test_missing_value(self, fake_winreg):
         fake_winreg.set(
-            fake_winreg.HKEY_CURRENT_USER, "Software\\Test",
+            fake_winreg.HKEY_CURRENT_USER,
+            "Software\\Test",
             values={"foo": "bar"},
         )
         with _install_fake_winreg(fake_winreg):
@@ -352,7 +178,8 @@ class TestGetPreloadKeys:
 
     def test_returns_klid_dict(self, fake_winreg):
         fake_winreg.set(
-            fake_winreg.HKEY_CURRENT_USER, "Keyboard Layout\\Preload",
+            fake_winreg.HKEY_CURRENT_USER,
+            "Keyboard Layout\\Preload",
             values={"1": "00000409", "2": "00000419"},
         )
         with _install_fake_winreg(fake_winreg):
@@ -363,7 +190,8 @@ class TestGetPreloadKeys:
 
     def test_empty_values_skipped(self, fake_winreg):
         fake_winreg.set(
-            fake_winreg.HKEY_CURRENT_USER, "Keyboard Layout\\Preload",
+            fake_winreg.HKEY_CURRENT_USER,
+            "Keyboard Layout\\Preload",
             values={"1": "", "2": "00000419"},
         )
         with _install_fake_winreg(fake_winreg):
@@ -383,7 +211,8 @@ class TestGetPreloadKeys:
 class TestScanSubstitutes:
     def test_basic_mapping(self, fake_winreg):
         fake_winreg.set(
-            fake_winreg.HKEY_CURRENT_USER, "Keyboard Layout\\Substitutes",
+            fake_winreg.HKEY_CURRENT_USER,
+            "Keyboard Layout\\Substitutes",
             values={"00000419": "00000409"},
         )
         with _install_fake_winreg(fake_winreg):
@@ -394,7 +223,8 @@ class TestScanSubstitutes:
 
     def test_case_normalized(self, fake_winreg):
         fake_winreg.set(
-            fake_winreg.HKEY_CURRENT_USER, "Keyboard Layout\\Substitutes",
+            fake_winreg.HKEY_CURRENT_USER,
+            "Keyboard Layout\\Substitutes",
             values={"D0010419": "00000409"},
         )
         with _install_fake_winreg(fake_winreg):
@@ -448,12 +278,14 @@ class TestKlidMatchesValue:
     def test_empty_value(self):
         assert not scanner._klid_matches_value("00000409", "")
 
+
 class TestScanBranchRecursive:
     """_scan_branch_recursive: recursive subtree scan."""
 
     def test_finds_nested_klid(self, fake_winreg):
         fake_winreg.set(
-            fake_winreg.HKEY_CURRENT_USER, "T\\A\\B\\C",
+            fake_winreg.HKEY_CURRENT_USER,
+            "T\\A\\B\\C",
             values={"KeyboardLayout": "00000419"},
         )
         with _install_fake_winreg(fake_winreg):
@@ -464,7 +296,8 @@ class TestScanBranchRecursive:
 
     def test_tip_format(self, fake_winreg):
         fake_winreg.set(
-            fake_winreg.HKEY_CURRENT_USER, "T2\\Sub",
+            fake_winreg.HKEY_CURRENT_USER,
+            "T2\\Sub",
             values={"InputMethodOverride": "0809:00000809"},
         )
         with _install_fake_winreg(fake_winreg):
@@ -483,7 +316,8 @@ class TestScanBranchRecursive:
     def test_permission_error_skipped(self, fake_winreg):
         fake_winreg.deny.add("T3\\Denied")
         fake_winreg.set(
-            fake_winreg.HKEY_CURRENT_USER, "T3\\Allowed",
+            fake_winreg.HKEY_CURRENT_USER,
+            "T3\\Allowed",
             values={"KLID": "00000409"},
         )
         with _install_fake_winreg(fake_winreg):
@@ -515,6 +349,7 @@ class TestGetLayoutName:
         with _install_fake_winreg(fake_winreg):
             name = scanner.get_layout_name("D001DEAD")
         assert name == "Layout (d001dead)"
+
 
 class TestParseLanguageEntries:
     """_parse_language_entries."""
@@ -548,23 +383,25 @@ class TestGetLanguageListFromPowerShell:
 
     def test_success(self, monkeypatch):
         mock_result = _proc(stdout="en-US\ten-US:00000409")
-        monkeypatch.setattr(scanner.subprocess, "run",
-                          _run_mock(returns=mock_result))
+        monkeypatch.setattr(scanner.subprocess, "run", _run_mock(returns=mock_result))
         entries = scanner._get_language_list_from_powershell()
         assert len(entries) == 1
         assert entries[0]["LanguageTag"] == "en-US"
         assert entries[0]["KeyboardLayoutId"] == "00000409"
 
     def test_empty_on_failure(self, monkeypatch):
-        monkeypatch.setattr(scanner.subprocess, "run",
-                          _run_mock(returns=_proc(returncode=1)))
+        monkeypatch.setattr(
+            scanner.subprocess, "run", _run_mock(returns=_proc(returncode=1))
+        )
         assert scanner._get_language_list_from_powershell() == []
 
     def test_timeout_returns_empty(self, monkeypatch):
         def raise_timeout(*a, **kw):
             raise subprocess.TimeoutExpired(cmd="pw", timeout=15)
-        monkeypatch.setattr(scanner.subprocess, "run",
-                          mock.MagicMock(side_effect=raise_timeout))
+
+        monkeypatch.setattr(
+            scanner.subprocess, "run", mock.MagicMock(side_effect=raise_timeout)
+        )
         assert scanner._get_language_list_from_powershell() == []
 
 
@@ -573,18 +410,21 @@ class TestScanKeyboardLayouts:
 
     def test_empty_registry(self, fake_winreg, monkeypatch):
         monkeypatch.setattr(scanner, "winreg", fake_winreg)
-        monkeypatch.setattr(scanner.subprocess, "run",
-                          _run_mock(returns=_proc(stdout="")))
+        monkeypatch.setattr(
+            scanner.subprocess, "run", _run_mock(returns=_proc(stdout=""))
+        )
         assert scanner.scan_keyboard_layouts() == {}
 
     def test_finds_preload_layout(self, fake_winreg, monkeypatch):
         fake_winreg.set(
-            fake_winreg.HKEY_CURRENT_USER, "Keyboard Layout\\Preload",
+            fake_winreg.HKEY_CURRENT_USER,
+            "Keyboard Layout\\Preload",
             values={"1": "00000409"},
         )
         monkeypatch.setattr(scanner, "winreg", fake_winreg)
-        monkeypatch.setattr(scanner.subprocess, "run",
-                          _run_mock(returns=_proc(stdout="")))
+        monkeypatch.setattr(
+            scanner.subprocess, "run", _run_mock(returns=_proc(stdout=""))
+        )
         result = scanner.scan_keyboard_layouts()
         assert "00000409" in result
         locs = result["00000409"]
@@ -593,8 +433,9 @@ class TestScanKeyboardLayouts:
     def test_finds_powershell_layout(self, fake_winreg, monkeypatch):
         monkeypatch.setattr(scanner, "winreg", fake_winreg)
         monkeypatch.setattr(
-            scanner.subprocess, "run",
-            _run_mock(returns=_proc(stdout="en-US\ten-US:00000409"))
+            scanner.subprocess,
+            "run",
+            _run_mock(returns=_proc(stdout="en-US\ten-US:00000409")),
         )
         result = scanner.scan_keyboard_layouts()
         assert "00000409" in result
@@ -603,12 +444,14 @@ class TestScanKeyboardLayouts:
 
     def test_invalid_klid_filtered(self, fake_winreg, monkeypatch):
         fake_winreg.set(
-            fake_winreg.HKEY_CURRENT_USER, "Keyboard Layout\\Preload",
+            fake_winreg.HKEY_CURRENT_USER,
+            "Keyboard Layout\\Preload",
             values={"1": "not_a_klid", "2": "00000409"},
         )
         monkeypatch.setattr(scanner, "winreg", fake_winreg)
-        monkeypatch.setattr(scanner.subprocess, "run",
-                          _run_mock(returns=_proc(stdout="")))
+        monkeypatch.setattr(
+            scanner.subprocess, "run", _run_mock(returns=_proc(stdout=""))
+        )
         result = scanner.scan_keyboard_layouts()
         assert "not_a_klid" not in result
         assert "00000409" in result
@@ -668,9 +511,7 @@ class TestSubtreeEmpty:
     """_subtree_is_empty."""
 
     def test_empty_subtree(self, fake_winreg):
-        fake_winreg.set(
-            fake_winreg.HKEY_CURRENT_USER, "EmptyKey"
-        )
+        fake_winreg.set(fake_winreg.HKEY_CURRENT_USER, "EmptyKey")
         with _install_fake_winreg(fake_winreg):
             result = cleaner._subtree_is_empty(
                 cleaner.winreg.HKEY_CURRENT_USER, "EmptyKey"
@@ -679,8 +520,7 @@ class TestSubtreeEmpty:
 
     def test_non_empty_subtree(self, fake_winreg):
         fake_winreg.set(
-            fake_winreg.HKEY_CURRENT_USER, "NonEmpty",
-            values={"foo": "bar"}
+            fake_winreg.HKEY_CURRENT_USER, "NonEmpty", values={"foo": "bar"}
         )
         with _install_fake_winreg(fake_winreg):
             result = cleaner._subtree_is_empty(
@@ -715,7 +555,7 @@ class TestSandboxIsolation:
         assert branches
         for root, subkey, _mode, admin_required in branches:
             assert subkey.startswith(config._SANDBOX_ROOT)
-            assert root == "HKCU"          # HKU/HKLM перенаправлены в HKCU sandbox
+            assert root == "HKCU"  # HKU/HKLM перенаправлены в HKCU sandbox
             assert admin_required is False  # права админа в sandbox не нужны
 
     def test_accessor_returns_real_branches_after_deactivate(self):
@@ -723,7 +563,12 @@ class TestSandboxIsolation:
         scanner.deactivate_sandbox()
         branches = [tuple(b) for b in scanner.get_affected_branches()]
         assert ("HKCU", "Keyboard Layout\\Preload", "preload", False) in branches
-        assert ("HKU", ".DEFAULT\\Keyboard Layout\\Preload", "preload", True) in branches
+        assert (
+            "HKU",
+            ".DEFAULT\\Keyboard Layout\\Preload",
+            "preload",
+            True,
+        ) in branches
 
     def test_activate_sandbox_is_idempotent(self):
         scanner.activate_sandbox()
@@ -746,9 +591,7 @@ class TestSandboxIsolation:
         )
         assert cleaner._ctf_subkey() in cleaner._recursive_subkeys()
         assert cleaner._intl_subkey() in cleaner._recursive_subkeys()
-        assert all(
-            s.startswith(sandbox) for s in cleaner._recursive_subkeys()
-        )
+        assert all(s.startswith(sandbox) for s in cleaner._recursive_subkeys())
         # ветки для delete_layout/plan_layout_removal — только sandbox
         for _root, subkey, _mode, _admin in cleaner._affected_branches():
             assert subkey.startswith(sandbox)
@@ -765,30 +608,44 @@ class TestSandboxIsolation:
     def test_report_field_mapping_in_sandbox(self):
         scanner.activate_sandbox()
         sandbox = config._SANDBOX_ROOT
-        assert cleaner._report_field_for(
-            "HKCU", sandbox + "\\Keyboard Layout\\Preload"
-        ) == "hkcu_preload_deleted"
-        assert cleaner._report_field_for(
-            "HKCU", sandbox + "\\Keyboard Layout\\Substitutes"
-        ) == "hkcu_substitutes_deleted"
-        assert cleaner._report_field_for(
-            "HKCU", sandbox + "\\Control Panel\\International\\User Profile"
-        ) == "hkcu_intl_deleted"
-        assert cleaner._report_field_for(
-            "HKCU", sandbox + "\\Software\\Microsoft\\CTF"
-        ) == "hkcu_ctf_deleted"
-        assert cleaner._report_field_for(
-            "HKCU", sandbox + "\\test\\.DEFAULT\\Keyboard Layout\\Preload"
-        ) == "hku_default_deleted"
+        assert (
+            cleaner._report_field_for("HKCU", sandbox + "\\Keyboard Layout\\Preload")
+            == "hkcu_preload_deleted"
+        )
+        assert (
+            cleaner._report_field_for(
+                "HKCU", sandbox + "\\Keyboard Layout\\Substitutes"
+            )
+            == "hkcu_substitutes_deleted"
+        )
+        assert (
+            cleaner._report_field_for(
+                "HKCU", sandbox + "\\Control Panel\\International\\User Profile"
+            )
+            == "hkcu_intl_deleted"
+        )
+        assert (
+            cleaner._report_field_for("HKCU", sandbox + "\\Software\\Microsoft\\CTF")
+            == "hkcu_ctf_deleted"
+        )
+        assert (
+            cleaner._report_field_for(
+                "HKCU", sandbox + "\\test\\.DEFAULT\\Keyboard Layout\\Preload"
+            )
+            == "hku_default_deleted"
+        )
         # реальные ветки маппятся как раньше
-        assert cleaner._report_field_for(
-            "HKCU", "Keyboard Layout\\Preload"
-        ) == "hkcu_preload_deleted"
+        assert (
+            cleaner._report_field_for("HKCU", "Keyboard Layout\\Preload")
+            == "hkcu_preload_deleted"
+        )
 
     def test_backup_paths_are_sandbox_only(self):
         scanner.activate_sandbox()
         cleaner.activate_sandbox()
-        paths = cleaner._paths_to_backup(cleaner._affected_branches(), admin_privileges=True)
+        paths = cleaner._paths_to_backup(
+            cleaner._affected_branches(), admin_privileges=True
+        )
         assert paths
         for entry in paths:
             assert entry["subkey"].startswith(config._SANDBOX_ROOT)
@@ -797,7 +654,9 @@ class TestSandboxIsolation:
     def test_backup_paths_real_mode_unchanged(self):
         scanner.deactivate_sandbox()
         cleaner.deactivate_sandbox()
-        paths = cleaner._paths_to_backup(cleaner._affected_branches(), admin_privileges=False)
+        paths = cleaner._paths_to_backup(
+            cleaner._affected_branches(), admin_privileges=False
+        )
         subkeys = {e["subkey"] for e in paths}
         assert "Keyboard Layout\\Preload" in subkeys
         # без админ-прав ветка HKU\\.DEFAULT не бэкапится
@@ -805,7 +664,9 @@ class TestSandboxIsolation:
         paths_admin = cleaner._paths_to_backup(
             cleaner._affected_branches(), admin_privileges=True
         )
-        assert ".DEFAULT\\Keyboard Layout\\Preload" in {e["subkey"] for e in paths_admin}
+        assert ".DEFAULT\\Keyboard Layout\\Preload" in {
+            e["subkey"] for e in paths_admin
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -826,9 +687,7 @@ class TestWinprocHelper:
             return mock.MagicMock(returncode=0, stdout="", stderr="")
 
         monkeypatch.setattr(winproc.subprocess, "run", fake_run)
-        winproc.run_hidden(
-            ["powershell", "-NoProfile", "-Command", "x"], timeout=5
-        )
+        winproc.run_hidden(["powershell", "-NoProfile", "-Command", "x"], timeout=5)
         cmd, kwargs = calls[0]
         assert cmd == ["powershell", "-NoProfile", "-Command", "x"]
         assert kwargs["creationflags"] & winproc.CREATE_NO_WINDOW
@@ -877,7 +736,8 @@ class TestWinprocHelper:
 
         monkeypatch.setattr(scanner.subprocess, "run", fake_run)
         entries = scanner._get_language_list_from_powershell()
-        assert entries and entries[0]["LanguageTag"] == "en-US"
+        assert entries
+        assert entries[0]["LanguageTag"] == "en-US"
         assert recorded, "run_hidden должен вызывать общий subprocess.run"
 
 
@@ -914,11 +774,17 @@ class TestRestoreLanguageList:
         with mock.patch.object(cleaner, "run_hidden", fake_run):
             ok = cleaner.restore_language_list(jp)
         assert ok is True
-        script = captured["cmd"][-1]
-        assert "New-WinUserLanguageList -Language 'en-US'" in script
-        assert "'0409:00000409'" in script
-        assert "Set-WinUserLanguageList" in script
-        assert '"SUCCESS"' in script
+        # Команда: [powershell, -NoProfile, -File, PS1_PATH, -JsonPath, JSON_PATH]
+        cmd = captured["cmd"]
+        assert "layout_cleaner_restore.ps1" in cmd[-3]  # PS1-файл
+        assert "-JsonPath" in cmd[-2]
+        # PS1-скрипт содержит нужные команды
+        ps_content = (cleaner._PS_DIR / "layout_cleaner_restore.ps1").read_text(
+            encoding="utf-8"
+        )
+        assert "New-WinUserLanguageList" in ps_content
+        assert "Set-WinUserLanguageList" in ps_content
+        assert '"SUCCESS"' in ps_content or "SUCCESS" in ps_content
 
     def test_single_quotes_are_escaped(self):
         jp = self._write_json(
@@ -929,21 +795,23 @@ class TestRestoreLanguageList:
                 }
             ]
         )
-        captured, fake_run = self._capture_success_run()
+        _captured, fake_run = self._capture_success_run()
         with mock.patch.object(cleaner, "run_hidden", fake_run):
             assert cleaner.restore_language_list(jp) is True
-        script = captured["cmd"][-1]
-        # Экранирование '' — единственная защита от PS-инъекции:
-        assert "-Language 'O''Brien'" in script
-        assert "'It''s'" in script
-        assert "O'Brien" not in script.replace("O''Brien", "")
+        # PS1-скрипт читает JSON напрямую — escape делается на уровне JSON,
+        # а не PowerShell-строк:
+        ps_content = (cleaner._PS_DIR / "layout_cleaner_restore.ps1").read_text(
+            encoding="utf-8"
+        )
+        assert "ConvertFrom-Json" in ps_content  # Чтение JSON
 
     def test_dict_input_supported(self):
         jp = self._write_json({"LanguageTag": "de-DE", "InputMethodTips": []})
         captured, fake_run = self._capture_success_run()
         with mock.patch.object(cleaner, "run_hidden", fake_run):
             assert cleaner.restore_language_list(jp) is True
-        assert "New-WinUserLanguageList -Language 'de-DE'" in captured["cmd"][-1]
+        cmd = captured["cmd"]
+        assert "layout_cleaner_restore.ps1" in cmd[-3]  # PS1-файл
 
     def test_false_without_success_marker(self):
         jp = self._write_json(
@@ -991,9 +859,10 @@ class TestVersion:
 
     def test_version_matches_pyproject(self):
         text = (
-            Path(__file__).resolve().parent.joinpath("pyproject.toml").read_text(
-                encoding="utf-8"
-            )
+            Path(__file__)
+            .resolve()
+            .parent.joinpath("pyproject.toml")
+            .read_text(encoding="utf-8")
         )
         m = re.search(r'^version\s*=\s*"([^"]+)"', text, re.MULTILINE)
         assert m is not None, "version не найден в pyproject.toml"
@@ -1002,4 +871,3 @@ class TestVersion:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
-

@@ -1,9 +1,10 @@
-import time
-import subprocess
+import contextlib
 import os
+import subprocess
 import tempfile
-import pytest
+import time
 
+import pytest
 
 _MUTEX_NAME = r"Global\TestKLC_FullRestart_{B4G9C3D2-8E5F-4B9C-9D7G-2F3E4G5H6I7J}"
 
@@ -124,23 +125,18 @@ else:
             old_stdout, _ = old_proc.communicate(timeout=15)
             new_stdout, _ = new_proc.communicate(timeout=15)
 
-            print("\n=== OLD PROCESS ===")
-            print(old_stdout)
-            print("=== NEW PROCESS ===")
-            print(new_stdout)
-
             # Проверяем результаты
             assert old_proc.returncode == 0, f"Old process failed: {old_stdout}"
             assert new_proc.returncode == 0, f"New process failed: {new_stdout}"
-            assert "NEW: SUCCESS" in new_stdout, "New process should have acquired mutex"
+            assert "NEW: SUCCESS" in new_stdout, (
+                "New process should have acquired mutex"
+            )
 
         finally:
             # Очистка файлов
             for path in [old_path, new_path]:
-                try:
+                with contextlib.suppress(OSError):
                     os.remove(path)
-                except OSError:
-                    pass
 
 
 if __name__ == "__main__":

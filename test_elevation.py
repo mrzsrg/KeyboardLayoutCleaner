@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""test_elevation.py - Unit tests for elevation mechanism."""
+"""test_elevation.py - Unit tests for elevation mechanism.
+
+Uses shared mocks from conftest.py:
+- conftest._make_ctk() - mocked customtkinter
+- conftest._cleanup_sandbox_state - autouse fixture (sandbox cleanup)
+"""
 
 import ctypes
 import importlib
@@ -10,22 +14,9 @@ from pathlib import Path
 
 import pytest
 
+# Import shared mocks from conftest (avoids duplication)
+from conftest import _make_ctk
 
-def _make_ctk():
-    """Создать мок customtkinter для тестов."""
-    import types
-    ctk = types.ModuleType("customtkinter")
-    for cls in ("CTk", "CTkApp", "CTkLabel", "CTkButton", "CTkFrame",
-                 "CTkEntry", "CTkCheckBox", "CTkTextbox", "CTkScrollableFrame",
-                 "CTkFont", "CTkOptionMenu"):
-        setattr(ctk, cls, type(cls, (), {"__init__": lambda s, *a, **k: None}))
-    ctk.ScalingTracker = type("S", (), {"get_window_scaling": lambda *a: 1.0})
-    ctk.set_appearance_mode = lambda *a: None
-    ctk.set_default_color_theme = lambda *a: None
-    for fn in ("deactivate_automatic_dpi_awareness", "enable_undocked_window_scaling",
-                "deactivate_automatic_high_dpi_awareness"):
-        setattr(ctk, fn, lambda *a: None)
-    return ctk
 
 def _patch_main(monkeypatch, frozen=False, sandbox=False):
     """Подготовить окружение для ЧИСТОГО импорта main (регрессия P0-2).
@@ -57,36 +48,24 @@ def _patch_main(monkeypatch, frozen=False, sandbox=False):
     monkeypatch.setenv("HOME", home)
     # 4) Детерминированное окружение (без зависимости от прошлых тестов)
     monkeypatch.setenv("SANDBOX_MODE", "1" if sandbox else "0")
+    # Force reload to ensure fresh bytecode (avoids stale .pyc issues)
+    import importlib
+
+    import main as _m
+
+    importlib.reload(_m)
 
 
-@pytest.fixture(autouse=True)
-def _reset_sandbox_state():
-    """Страховка порядкозависимости (регрессия P0-2).
-
-    Выполняется ПОСЛЕ каждого теста файла: к этому моменту monkeypatch уже
-    восстановил sys.modules, поэтому флаги сбрасываются на канонических
-    экземплярах модулей. Ни один тест не оставит после себя
-    SANDBOX_MODE=True ни в окружении, ни в модулях.
-    """
-    yield
-    os.environ.pop("SANDBOX_MODE", None)
-    try:
-        import config as _cfg
-        _cfg.SANDBOX_MODE = False
-    except Exception:
-        pass
-    try:
-        import scanner as _scn
-        _scn.SANDBOX_MODE = False
-    except Exception:
-        pass
+# _reset_sandbox_state is now provided by conftest._cleanup_sandbox_state
+# (autouse fixture with scope="function" — runs after each test)
+# Local version removed to avoid duplication
 
 
 class TestRestartCommandLine:
-
     def test_non_frozen_restart(self, monkeypatch):
         _patch_main(monkeypatch, frozen=False)
         import main
+
         assert not main.SANDBOX_MODE
         args = main.parse_args()
         assert hasattr(args, "sandbox")
@@ -94,47 +73,53 @@ class TestRestartCommandLine:
     def test_frozen_restart(self, monkeypatch):
         _patch_main(monkeypatch, frozen=True)
         import main
+
         assert not main.SANDBOX_MODE
 
     def test_sandbox_from_env(self, monkeypatch):
         _patch_main(monkeypatch, frozen=False, sandbox=True)
         import main
+
         assert main.SANDBOX_MODE is True
 
     def test_sandbox_flag_sets_env(self, monkeypatch):
         _patch_main(monkeypatch, frozen=False)
         import main
+
         args = main.parse_args(["--sandbox"])
         assert args.sandbox is True
         assert os.environ.get("SANDBOX_MODE") == "1"
 
 
 class TestSandboxModeSync:
-
     def test_synced_to_scanner(self, monkeypatch):
         _patch_main(monkeypatch, sandbox=True)
-        import main  # noqa: F401 — импорт исполняет код модуля (синхронизация sandbox-флага)
         import config
-        assert config.SANDBOX_MODE is True
+        import main  # noqa: F401 — импорт исполняет код модуля (синхронизация sandbox-флага)
+
+        assert bool(config.SANDBOX_MODE) is True
 
     def test_synced_to_cleaner(self, monkeypatch):
         _patch_main(monkeypatch, sandbox=True)
-        import main  # noqa: F401 — импорт исполняет код модуля (синхронизация sandbox-флага)
         import config
-        assert config.SANDBOX_MODE is True
+        import main  # noqa: F401 — импорт исполняет код модуля (синхронизация sandbox-флага)
+
+        assert bool(config.SANDBOX_MODE) is True
 
     def test_non_sandbox(self, monkeypatch):
         _patch_main(monkeypatch, sandbox=False)
         import config
-        assert config.SANDBOX_MODE is False
+
+        assert bool(config.SANDBOX_MODE) is False
 
 
 class TestMutexMechanism:
-
     def test_mutex_name_defined(self):
         import main
+
         assert hasattr(main, "_MUTEX_NAME")
-        assert isinstance(main._MUTEX_NAME, str) and len(main._MUTEX_NAME) > 0
+        assert isinstance(main._MUTEX_NAME, str)
+        assert len(main._MUTEX_NAME) > 0
 
     def test_mutex_create_and_close(self):
         handle = ctypes.windll.kernel32.CreateMutexW(None, False, "TestMutexUnit")
@@ -152,6 +137,7 @@ class TestMutexMechanism:
 
     def test_mutex_polling(self):
         import time
+
         h = ctypes.windll.kernel32.CreateMutexW(None, False, "TestMutexPoll")
         assert h != 0
         ctypes.windll.kernel32.CloseHandle(h)
@@ -164,6 +150,7 @@ class TestMutexMechanism:
     def test_mutex_acquire_after_release(self):
         """Тест: новый процесс может захватить мьютекс после освобождения старым."""
         import time
+
         # Создаём мьютекс (имитация старого процесса)
         h1 = ctypes.windll.kernel32.CreateMutexW(None, False, "TestMutexElevate")
         assert h1 != 0
@@ -189,57 +176,51 @@ class TestMutexMechanism:
 
 
 class TestSandboxConfig:
-
     def test_sandbox_root_defined(self):
         from config import _SANDBOX_ROOT
+
         assert isinstance(_SANDBOX_ROOT, str)
         assert len(_SANDBOX_ROOT) > 0
 
     def test_is_sandbox_enabled_env(self, monkeypatch):
         from config import is_sandbox_enabled
+
         monkeypatch.setenv("SANDBOX_MODE", "1")
         assert is_sandbox_enabled() is True
 
     def test_is_sandbox_enabled_env_false(self, monkeypatch):
         from config import is_sandbox_enabled
+
         monkeypatch.setenv("SANDBOX_MODE", "0")
         assert is_sandbox_enabled() is False
 
 
 class TestModuleImports:
-
     def _mock_ctk(self, monkeypatch):
-        import types
-        ctk = types.ModuleType("customtkinter")
-        for cls in ("CTk", "CTkApp", "CTkLabel", "CTkButton", "CTkFrame",
-                     "CTkEntry", "CTkCheckBox", "CTkTextbox", "CTkScrollableFrame",
-                     "CTkFont", "CTkOptionMenu"):
-            setattr(ctk, cls, type(cls, (), {"__init__": lambda s, *a, **k: None}))
-        ctk.ScalingTracker = type("S", (), {"get_window_scaling": lambda *a: 1.0})
-        ctk.set_appearance_mode = lambda *a: None
-        for fn in ("deactivate_automatic_dpi_awareness", "enable_undocked_window_scaling",
-                    "deactivate_automatic_high_dpi_awareness"):
-            setattr(ctk, fn, lambda *a: None)
-        monkeypatch.setitem(sys.modules, "customtkinter", ctk)
+        """Mock customtkinter using shared factory from conftest."""
+        monkeypatch.setitem(sys.modules, "customtkinter", _make_ctk())
 
     def test_imports_cleaner(self, monkeypatch):
         self._mock_ctk(monkeypatch)
         import main
+
         assert hasattr(main, "delete_layout")
 
     def test_imports_scanner(self, monkeypatch):
         self._mock_ctk(monkeypatch)
         import main
+
         assert hasattr(main, "scan_keyboard_layouts")
 
     def test_apply_sandbox_to_modules(self, monkeypatch):
         self._mock_ctk(monkeypatch)
-        import main
         import config
+        import main
+
         main._apply_sandbox_to_modules(True)
-        assert config.SANDBOX_MODE is True
+        assert config.is_sandbox_enabled() is True
         main._apply_sandbox_to_modules(False)
-        assert config.SANDBOX_MODE is False
+        assert config.is_sandbox_enabled() is False
 
 
 class TestActiveLangCache:
@@ -296,7 +277,9 @@ class TestActiveLangCache:
 
     def test_no_powershell_pair_returns_false(self, monkeypatch):
         m = self._main(monkeypatch)
-        data = {"04190419": [{"path": r"HKCU\Software\Microsoft\CTF\Assemblies\{GUID}"}]}
+        data = {
+            "04190419": [{"path": r"HKCU\Software\Microsoft\CTF\Assemblies\{GUID}"}]
+        }
         assert m._active_lang_cache("04190419", data) is False
 
     def test_different_langid_in_ps_returns_false(self, monkeypatch):

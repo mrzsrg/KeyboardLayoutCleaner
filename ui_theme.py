@@ -29,9 +29,10 @@ from pathlib import Path
 
 import customtkinter as ctk
 
+import applog
+
 logger = logging.getLogger("layout_cleaner")
-if not logger.handlers:
-    logger.addHandler(logging.NullHandler())
+applog.setup_null_handler(logger)
 
 # ---------------------------------------------------------------------------
 # Публичные константы
@@ -50,15 +51,40 @@ BRIGHTNESS_FACTORS: dict[str, float] = {
 DEFAULT_BRIGHTNESS = "normal"
 
 # Токены, означающие цвет шрифта: к ним применяется яркость
-TEXT_TOKENS = frozenset({
-    "text", "text_dim", "section_title", "guide", "status_text",
-    "ok", "err", "hint_warn", "row_text", "row_text_selected", "backup",
-    "accent_text", "danger_text", "safe_text", "restart_text",
-    "menu_text", "check_text",
-    "tag_h1", "tag_sub", "tag_legend", "tag_dim", "tag_path", "tag_ok",
-    "tag_miss", "tag_admin", "tag_blocked", "tag_warn", "tag_val",
-    "tag_note", "tag_item",
-})
+TEXT_TOKENS = frozenset(
+    {
+        "text",
+        "text_dim",
+        "section_title",
+        "guide",
+        "status_text",
+        "ok",
+        "err",
+        "hint_warn",
+        "row_text",
+        "row_text_selected",
+        "backup",
+        "accent_text",
+        "danger_text",
+        "safe_text",
+        "restart_text",
+        "menu_text",
+        "check_text",
+        "tag_h1",
+        "tag_sub",
+        "tag_legend",
+        "tag_dim",
+        "tag_path",
+        "tag_ok",
+        "tag_miss",
+        "tag_admin",
+        "tag_blocked",
+        "tag_warn",
+        "tag_val",
+        "tag_note",
+        "tag_item",
+    }
+)
 
 # ---------------------------------------------------------------------------
 # Определения тем
@@ -120,8 +146,8 @@ _CLASSIC: dict = {
     "h_delete": 46,
     "h_restore": 36,
     # --- шрифты ---------------------------------------------------------------
-    "font_ui": "Segoe UI",
-    "font_mono": "Consolas",
+    "font_ui": "Segoe UI, Tahoma, Helvetica, sans-serif",
+    "font_mono": "Consolas, Courier New, monospace",
     "mono_ui": False,  # False — обычный пропорциональный шрифт интерфейса
     "sz_banner": 17,
     "sz_restart": 15,
@@ -140,7 +166,6 @@ _CLASSIC: dict = {
     "sz_placeholder": 15,
     "sz_menu": 13,
     "sz_tool": 13,
-
     # --- текстовые цвета (масштабируются яркостью) -----------------------------
     "text": "#eaf2ff",
     "text_dim": "#9a9a9a",
@@ -161,17 +186,17 @@ _CLASSIC: dict = {
     "check_text": "#d0d0d0",
     # --- цвета тегов rich-text панели деталей -----------------------------------
     "tag_h1": "#ffffff",
-    "tag_sub": "#b3b3b3",     # gray70
+    "tag_sub": "#b3b3b3",  # gray70
     "tag_legend": "#949494",  # gray58
-    "tag_dim": "#b8b8b8",     # gray72
+    "tag_dim": "#b8b8b8",  # gray72
     "tag_path": "#eaf2ff",
     "tag_ok": "#2ecc71",
-    "tag_miss": "#9e9e9e",    # gray62
+    "tag_miss": "#9e9e9e",  # gray62
     "tag_admin": "#e67e22",
     "tag_blocked": "#e74c3c",
     "tag_warn": "#f1c40f",
     "tag_val": "#9aa5b1",
-    "tag_note": "#999999",    # gray60
+    "tag_note": "#999999",  # gray60
     "tag_item": "#ffffff",
     # --- пульсирующая подсветка (база, акцент) ----------------------------------
     "pulses": {
@@ -226,7 +251,6 @@ _TERMINAL: dict = {
     "check_border": "#5a6a5a",
     # --- прогресс -----------------------------------------------------------
     "progress": "#39d353",
-
     # --- геометрия: плоский «терминал» — без скруглений --------------------------
     "radius_frame": 0,
     "radius_btn": 0,
@@ -404,14 +428,10 @@ def scale_color(color: str, factor: float) -> str:
     factor > 1 — к белому, factor < 1 — к чёрному.
     Не-HEX значения (имена Tk) возвращаются без изменений.
     """
-    if (
-        not isinstance(color, str)
-        or not color.startswith("#")
-        or len(color) != 7
-    ):
+    if not isinstance(color, str) or not color.startswith("#") or len(color) != 7:
         return color
     try:
-        r, g, b = (int(color[i:i + 2], 16) for i in (1, 3, 5))
+        r, g, b = (int(color[i : i + 2], 16) for i in (1, 3, 5))
     except ValueError:
         return color
 
@@ -420,22 +440,20 @@ def scale_color(color: str, factor: float) -> str:
             return round(c + (255 - c) * (factor - 1.0))
         return round(c * factor)
 
-    return "#{:02x}{:02x}{:02x}".format(
-        *(min(255, max(0, _ch(x))) for x in (r, g, b))
-    )
+    return "#{:02x}{:02x}{:02x}".format(*(min(255, max(0, _ch(x))) for x in (r, g, b)))
 
 
-def _T() -> dict:
+def _T() -> dict:  # noqa: N802
     """Активный словарь темы."""
     return _THEMES[_theme]
 
 
-def S(token: str):
+def S(token: str):  # noqa: N802
     """Структурный параметр темы (фон, рамка, радиус) — без масштабирования."""
     return _T()[token]
 
 
-def C(token: str) -> str:
+def C(token: str) -> str:  # noqa: N802
     """Цвет шрифта по токену — с учётом текущей яркости шрифтов."""
     color = _T()[token]
     if token in TEXT_TOKENS:
@@ -443,18 +461,17 @@ def C(token: str) -> str:
     return color
 
 
-
-def P(kind: str) -> tuple:
+def P(kind: str) -> tuple:  # noqa: N802
     """Пара цветов (база, акцент) для пульсирующей подсветки элемента."""
     return tuple(_T()["pulses"][kind])
 
 
-def N(token: str):
+def N(token: str):  # noqa: N802
     """Числовой параметр темы (радиусы, высоты, толщина рамок)."""
     return _T()[token]
 
 
-def F(token: str) -> str:
+def F(token: str) -> str:  # noqa: N802
     """Имя семейства шрифтов по токену ('font_ui' / 'font_mono')."""
     return _T()[token]
 
@@ -476,12 +493,9 @@ def body_font(size: int, weight: str | None = None, slant: str | None = None):
 
 def mono_font(size: int, weight: str | None = None):
     """Моноширинный шрифт (значения, пути, коды)."""
-    return ctk.CTkFont(
-        family=F("font_mono"), size=size, weight=weight or "normal"
-    )
+    return ctk.CTkFont(family=F("font_mono"), size=size, weight=weight or "normal")
 
 
 def row_text_key() -> str:
     """Ключ локализации строки списка раскладок для активной темы."""
     return "list_row_terminal" if _T()["mono_ui"] else "list_row"
-

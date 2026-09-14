@@ -12,9 +12,10 @@ import logging
 from ctypes import windll
 from pathlib import Path
 
+import applog
+
 logger = logging.getLogger("layout_cleaner")
-if not logger.handlers:
-    logger.addHandler(logging.NullHandler())
+applog.setup_null_handler(logger)
 
 SUPPORTED = ("en", "ru", "es", "de", "zh", "pt")
 FALLBACK = "en"
@@ -49,7 +50,8 @@ def detect_system_lang() -> str:
     try:
         lang_id = int(windll.kernel32.GetUserDefaultUILanguage())
         return _PRIMARY_TO_LANG.get(lang_id & 0xFF, FALLBACK)
-    except Exception:  # noqa: BLE001
+    except Exception:
+        logger.exception("Не удалось определить язык системы — fallback: %s", FALLBACK)
         return FALLBACK
 
 
@@ -73,9 +75,7 @@ def set_language(lang: str) -> str:
         try:
             strings.update(_load_file(lang))
         except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "Локаль %s не загружена (%s) — используется en", lang, exc
-            )
+            logger.warning("Локаль %s не загружена (%s) — используется en", lang, exc)
             lang = FALLBACK
     tr.clear()
     tr.update(strings)

@@ -121,7 +121,6 @@
   "dlg_restore_failed_langlist": "failed to restore the language list",
   "dlg_restore_see_log": "see layout_cleaner.log for details",
   "dlg_backups_read_error": "Failed to read the backups folder:\n{error}",
-  "dlg_no_backups": "No backups yet.\n\nThey are created automatically each time you delete a layout.\nBackup folder:\n{path}",
   "dlg_elevation_title": "Elevation",
   "dlg_elevation_cancelled": "Failed to start the process with administrator privileges (code {code}).\nThe UAC prompt was probably declined.\nThe application will continue with its current privileges.",
   "dlg_elevation_error": "Failed to restart as administrator:\n{error}",
@@ -131,7 +130,6 @@
   "dlg_elevation_no_assoc": "Failed to contact the system to start the process.",
   "dlg_elevation_bad_netpath": "Network error: server is unavailable.",
   "dlg_elevation_generic_error": "Unknown error (code {code}). Please try again.",
-  "dlg_elevation_error": "Failed to restart as administrator:\n{error}",
   "banner_checking": "Checking privileges...",
   "stage_hint_start": "→ Click “🔍 Scan system” to begin",
   "stage_hint_choose": "→ Click the layout row in the list above",
@@ -179,5 +177,11 @@
   "brightness_bright": "◐ Bright (130%)",
   "brightness_ultra": "◐ Ultra (165%)",
   "status_busy_wait": "⏳ Wait for the current operation to finish",
-  "list_row_terminal": "[KBD] {name}  |  entries: {count}"
+  "list_row_terminal": "[KBD] {name}  |  entries: {count}",
+  "tray_show": "Show window",
+  "tray_hide": "Hide window",
+  "tray_restart": "Restart as Administrator",
+  "tray_quit": "Quit",
+  "list_col_name": "Layout name",
+  "list_col_type": "Entries"
 }

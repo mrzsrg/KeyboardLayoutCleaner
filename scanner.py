@@ -10,23 +10,20 @@ import logging
 import re
 import subprocess
 import winreg
+from pathlib import Path
 from typing import Any
 
+import applog
 from config import (
-    SANDBOX_MODE,
     _SANDBOX_ROOT,
     disable_sandbox,
+    enable_sandbox,
     is_sandbox_enabled,
 )
 from winproc import run_hidden
 
 logger = logging.getLogger("layout_cleaner")
-if not logger.handlers:
-    try:
-        logger.addHandler(logging.NullHandler())
-    except RecursionError:
-        # Защита от рекурсии при мокировании в тестах
-        pass
+applog.setup_null_handler(logger)
 
 # ---------------------------------------------------------------------------
 # Fallback-словарь BCP-47 -> KLID HEX
@@ -134,7 +131,7 @@ def _safe_str(val: object) -> str:
     """
     try:
         return str(val).strip()
-    except Exception as exc:  # noqa: BLE001 — защита от любых экзотических типов
+    except (TypeError, ValueError, UnicodeDecodeError) as exc:
         logger.debug("Не удалось привести значение к строке: %s", exc)
         return ""
 
@@ -180,9 +177,7 @@ def _get_preload_keys(root_key: int, subkey_path: str) -> dict[str, str]:
     return result
 
 
-def _scan_substitutes(
-    root_key: int, subkey_path: str
-) -> dict[str, dict[str, str]]:
+def _scan_substitutes(root_key: int, subkey_path: str) -> dict[str, dict[str, str]]:
     """Считать ключи Substitutes и вернуть {source_klid: {"target": ...}}."""
     result: dict[str, dict[str, str]] = {}
     values = _reg_get_string(root_key, subkey_path)
@@ -211,7 +206,12 @@ AFFECTED_BRANCHES: list[tuple[str, str, str, bool]] = [
     ("HKCU", "Keyboard Layout\\Substitutes", "substitutes", False),
     ("HKCU", "Control Panel\\International\\User Profile", "preload", False),
     ("HKCU", "Software\\Microsoft\\CTF", "preload", False),
-    ("HKCU", "Software\\Microsoft\\Windows\\CurrentVersion\\SettingSync\\Namespace\\Language", "preload", False),
+    (
+        "HKCU",
+        "Software\\Microsoft\\Windows\\CurrentVersion\\SettingSync\\Namespace\\Language",
+        "preload",
+        False,
+    ),
     ("HKU", ".DEFAULT\\Keyboard Layout\\Preload", "preload", True),
 ]
 
@@ -243,7 +243,12 @@ _ORIGINAL_AFFECTED_BRANCHES: list[tuple[str, str, str, bool]] = [
     ("HKCU", "Keyboard Layout\\Substitutes", "substitutes", False),
     ("HKCU", "Control Panel\\International\\User Profile", "preload", False),
     ("HKCU", "Software\\Microsoft\\CTF", "preload", False),
-    ("HKCU", "Software\\Microsoft\\Windows\\CurrentVersion\\SettingSync\\Namespace\\Language", "preload", False),
+    (
+        "HKCU",
+        "Software\\Microsoft\\Windows\\CurrentVersion\\SettingSync\\Namespace\\Language",
+        "preload",
+        False,
+    ),
     ("HKU", ".DEFAULT\\Keyboard Layout\\Preload", "preload", True),
 ]
 
@@ -257,7 +262,7 @@ def _get_sandbox_affected_branches() -> list[tuple[str, str, str, bool]]:
     префиксированные ветки (защита от двойной активации).
     """
     branches: list[tuple[str, str, str, bool]] = []
-    for root_name, subkey, scan_type, admin_required in AFFECTED_BRANCHES:
+    for root_name, subkey, scan_type, _admin_required in AFFECTED_BRANCHES:
         if subkey.startswith(_SANDBOX_ROOT):
             # Уже sandbox-ветка (повторная активация) — оставляем как есть
             branches.append(("HKCU", subkey, scan_type, False))
@@ -273,7 +278,7 @@ def _get_sandbox_affected_branches() -> list[tuple[str, str, str, bool]]:
 
 
 # Lazy evaluation: при import всегда берём «настоящие» ветки;
-# sandbox-mode включается через scanner.SANDBOX_MODE = True + patch.
+# sandbox-mode включается через activate_sandbox() + enable_sandbox().
 def get_affected_branches() -> list[tuple[str, str, str, bool]]:
     """Публичный аксессор: актуальный список веток с учётом sandbox.
 
@@ -284,7 +289,7 @@ def get_affected_branches() -> list[tuple[str, str, str, bool]]:
     `from scanner import AFFECTED_BRANCHES` фиксирует список на момент
     импорта и не переключается вместе с sandbox (источник утечки P0-1).
     """
-    if SANDBOX_MODE or is_sandbox_enabled():
+    if is_sandbox_enabled():
         return _get_sandbox_affected_branches()
     return AFFECTED_BRANCHES
 
@@ -313,7 +318,8 @@ def _build_sandbox_recursive() -> set[str]:
     return {
         _SANDBOX_ROOT + "\\Control Panel\\International\\User Profile",
         _SANDBOX_ROOT + "\\Software\\Microsoft\\CTF",
-        _SANDBOX_ROOT + "\\Software\\Microsoft\\Windows\\CurrentVersion\\SettingSync\\Namespace\\Language",
+        _SANDBOX_ROOT
+        + "\\Software\\Microsoft\\Windows\\CurrentVersion\\SettingSync\\Namespace\\Language",
     }
 
 
@@ -334,7 +340,7 @@ def activate_sandbox() -> None:
     HKU_BRANCHES = _build_sandbox_hku()
     HKLM_BRANCHES = []  # HKLM не сканируем в sandbox
     _RECURSIVE_SCAN = _build_sandbox_recursive()
-    globals()["SANDBOX_MODE"] = True
+    enable_sandbox()
 
 
 def deactivate_sandbox() -> None:
@@ -360,7 +366,6 @@ def deactivate_sandbox() -> None:
     ]
     HKLM_BRANCHES = list(_ORIGINAL_HKLM_BRANCHES)
     _RECURSIVE_SCAN = set(_ORIGINAL_RECURSIVE_SCAN)
-    globals()["SANDBOX_MODE"] = False
     disable_sandbox()
 
 
@@ -482,9 +487,7 @@ def _scan_branch_recursive(
             logger.debug("Максимальная глубина скана: %s", key_path)
             return
         try:
-            with winreg.OpenKey(
-                root_key, key_path, 0, winreg.KEY_READ
-            ) as key:
+            with winreg.OpenKey(root_key, key_path, 0, winreg.KEY_READ) as key:
                 idx = 0
                 while True:
                     try:
@@ -496,9 +499,7 @@ def _scan_branch_recursive(
                     tip_match = _TIP_KLID_RE.match(raw)
                     if tip_match:
                         klid = tip_match.group(1).lower()
-                    elif _KLID_RE.match(raw) or re.fullmatch(
-                        r"[0-9]{3,10}", raw
-                    ):
+                    elif _KLID_RE.match(raw) or re.fullmatch(r"[0-9]{3,10}", raw):
                         # Числовые токены (1033, 68748313) — десятичные
                         # HKL/KLID; _normalize_klid_token приводит их к
                         # каноническому 8-HEX виду (тот же формат, что у
@@ -512,10 +513,8 @@ def _scan_branch_recursive(
                                 klid = tag_klid.lower()
                                 break
                     if klid:
-                        rel = key_path[len(subkey_path):].lstrip("\\")
-                        found.append(
-                            (f"{rel}\\{name}" if rel else name, klid)
-                        )
+                        rel = key_path[len(subkey_path) :].lstrip("\\")
+                        found.append((f"{rel}\\{name}" if rel else name, klid))
                     idx += 1
                 sub_idx = 0
                 while True:
@@ -536,13 +535,15 @@ def _resolve_name(hex_code: str) -> str:
     """Получить человеко-читаемое название для HEX-кода раскладки."""
     # 1. Попробовать через HKLM (Layout Text)
     try:
-        with winreg.OpenKey(
-            winreg.HKEY_LOCAL_MACHINE,
-            "SYSTEM\\CurrentControlSet\\Control\\Keyboard Layouts",
-        ) as layouts_key:
-            with winreg.OpenKey(layouts_key, hex_code) as layout_key:
-                name, _ = winreg.QueryValueEx(layout_key, "Layout Text")
-                return name
+        with (
+            winreg.OpenKey(
+                winreg.HKEY_LOCAL_MACHINE,
+                "SYSTEM\\CurrentControlSet\\Control\\Keyboard Layouts",
+            ) as layouts_key,
+            winreg.OpenKey(layouts_key, hex_code) as layout_key,
+        ):
+            name, _ = winreg.QueryValueEx(layout_key, "Layout Text")
+            return name
     except FileNotFoundError:
         pass
     except OSError:
@@ -613,16 +614,17 @@ def _get_language_list_from_powershell() -> list[dict[str, Any]]:
       - LanguageTag (BCP-47), e.g. "en-GB"
       - KeyboardLayoutId (KLID HEX), e.g. "00000809"
     """
-    script = r"""
-$langs = Get-WinUserLanguageList;
-foreach ($l in $langs) {
-    $tips = @($l.InputMethodTips) -join ';';
-    Write-Output ("{0}`t{1}" -f $l.LanguageTag, $tips);
-}
-"""
+    script_path = Path(__file__).parent / "scripts" / "layout_cleaner_list.ps1"
     try:
         result = run_hidden(
-            ["powershell", "-NoProfile", "-Command", script],
+            [
+                "powershell",
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                str(script_path),
+            ],
             capture_output=True,
             text=True,
             timeout=20,
@@ -706,9 +708,7 @@ def scan_keyboard_layouts() -> dict[str, list[dict[str, str]]]:
             for rel, klid in _scan_branch_recursive(
                 winreg.HKEY_CURRENT_USER, subkey_path
             ):
-                _add_location(
-                    klid, f"HKCU\\{subkey_path}", f"{rel}={klid}"
-                )
+                _add_location(klid, f"HKCU\\{subkey_path}", f"{rel}={klid}")
 
     # ------------------------------------------------------------------
     # 2. Сканирование HKLM веток
@@ -775,10 +775,7 @@ def scan_keyboard_layouts() -> dict[str, list[dict[str, str]]]:
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
     layouts = scan_keyboard_layouts()
-    print(f"Found {len(layouts)} keyboard layout(s):\n")
     for klid in layouts:
         name = _resolve_name(klid)
-        print(f"  [{klid}] {name}")
-        for loc in layouts[klid]:
-            print(f"    -> {loc['path']}")
-            print(f"       value: {loc['value']}")
+        for _loc in layouts[klid]:
+            pass

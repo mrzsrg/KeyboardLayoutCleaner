@@ -21,12 +21,11 @@ import ctypes
 import logging
 import os
 import queue
+import re
 import sys
 import threading
-import time
-import re
-from typing import Any
 from tkinter import messagebox
+from typing import Any, ClassVar
 
 # ---------------------------------------------------------------------------
 # Логгер — создаём ДО мьютекса, т.к. _acquire_mutex использует logger
@@ -34,21 +33,38 @@ from tkinter import messagebox
 logger = logging.getLogger("layout_cleaner")
 
 # ---------------------------------------------------------------------------
+# Проверка версии Python — только для запуска из исходников (dev-режим).
+# В собранном .exe (PyInstaller) интерпретатор встроен, проверка не нужна.
+# ---------------------------------------------------------------------------
+if not getattr(sys, "frozen", False) and sys.version_info < (3, 10):
+    msg = (
+        "Для запуска из исходников требуется Python 3.10+.\\n"
+        "Используйте собранный .exe файл из папки dist/\\"
+    )
+    sys.exit(1)
+
+# ---------------------------------------------------------------------------
 # Ранняя настройка логгера — ДО мьютекса, чтобы _acquireмог писать в лог
 # ---------------------------------------------------------------------------
 try:
     from applog import setup_logging as _early_setup_logging
+
     _early_setup_logging()
-except Exception:
-    pass  # Логгер не критичен для работы 
+except (ImportError, AttributeError, OSError):
+    # Логгер ещё не настроен на этом этапе — пишем в stderr
+    print(  # noqa: T201
+        "warning: ранний setup_logging упал, журналирование недоступно", file=sys.stderr
+    )
 
 # ---------------------------------------------------------------------------
 # Импорт из центрального модуля конфигурации
 # ---------------------------------------------------------------------------
+from config import (
+    __version__ as app_version,
+)
 from config import (  # noqa: E402 — импорты ниже _parse_sandbox_mode намеренны (см. блок на стр. 221)
-    enable_sandbox,
     disable_sandbox,
-    __version__ as APP_VERSION,
+    enable_sandbox,
 )
 
 # ---------------------------------------------------------------------------
@@ -58,7 +74,9 @@ from config import (  # noqa: E402 — импорты ниже _parse_sandbox_mo
 # чтобы они подхватили правильное значение.
 
 
-def _parse_sandbox_mode(argv: list[str] | None = None) -> tuple[bool, argparse.Namespace]:
+def _parse_sandbox_mode(
+    argv: list[str] | None = None,
+) -> tuple[bool, argparse.Namespace]:
     """Разобрать --sandbox флаг + переменную окружения.
 
     Returns
@@ -75,8 +93,16 @@ def _parse_sandbox_mode(argv: list[str] | None = None) -> tuple[bool, argparse.N
         action="store_true",
         default=False,
         help="Запустить в режиме песочницы: все операции реестра изолированы "
-             "в HKCU\\Software\\KeyboardCleanerTest. "
-             "Также переключается переменной SANDBOX_MODE=1.",
+        "в HKCU\\Software\\KeyboardCleanerTest. "
+        "Также переключается переменной SANDBOX_MODE=1.",
+    )
+    parser.add_argument(
+        "--elevate",
+        action="store_true",
+        default=False,
+        help="Флаг санкционированного перезапуска от имени администратора. "
+        "Применяется только при UAC-elevation для корректной передачи "
+        "владения мьютексом от старого процесса.",
     )
     args, _ = parser.parse_known_args(argv)
 
@@ -103,8 +129,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def _apply_sandbox_to_modules(sandbox_enabled: bool) -> None:
     """Синхронизировать SANDBOX_MODE в модулях scanner/cleaner."""
-    import config as _cfg
-    _cfg.SANDBOX_MODE = sandbox_enabled
     if sandbox_enabled:
         enable_sandbox()
     else:
@@ -118,63 +142,29 @@ if sys.platform != "win32":
     if sys.stderr:
         sys.stderr.write("Keyboard Layout Cleaner работает только под Windows.\n")
     else:
-        messagebox.showerror("Ошибка", "Keyboard Layout Cleaner работает только под Windows.")
+        messagebox.showerror(
+            "Ошибка", "Keyboard Layout Cleaner работает только под Windows."
+        )
     sys.exit(1)
 
 # ---------------------------------------------------------------------------
 # Защита от параллельных запусков (named mutex)
 # ---------------------------------------------------------------------------
+from mutex import acquire_mutex as _mutex_acquire
+from mutex import release_mutex as _mutex_release
+
+# Алиасы для обратной совместимости с тестами
 _MUTEX_NAME = r"Global\KeyboardLayoutCleaner_{A3F8B2C1-7D4E-4A9B-8C6F-1E2D3F4A5B6C}"
 
 
-def _acquire_mutex() -> tuple[int | None, int]:
-    """
-    Создать mutex, разрешая гонку при перезапуске (elevate).
-
-    Возвращает (handle, err):
-      handle != None — успешно, новый процесс стал владельцем.
-      handle is None — ERROR_ALREADY_EXISTS даже после ожидания;
-                       старый процесс всё ещё держит mutex.
-    """
-    pid = os.getpid()
-    logger.info("[PID=%d] Попытка захвата мьютекса", pid)
-
-    # Первичная попытка
-    h = ctypes.windll.kernel32.CreateMutexW(None, False, _MUTEX_NAME)
-    err = ctypes.windll.kernel32.GetLastError()
-    logger.info("[PID=%d] CreateMutexW: handle=%s, error=%d", pid, h, err)
-
-    if err == 183:  # ERROR_ALREADY_EXISTS
-        # Мьютекс уже существует — есть старый процесс.
-        # Закрываем свой handle на существующий мьютекс,
-        # иначе мьютекс никогда не освободится!
-        logger.info("[PID=%d] Мьютекс занят (ERROR_ALREADY_EXISTS), закрываем handle %s и ждём...", pid, h)
-        ctypes.windll.kernel32.CloseHandle(h)
-
-        # Ждём, пока старый процесс полностью освободит мьютекс.
-        # Даём до 60 секунд (200 попыток × 300 мс).
-        h = None
-        for attempt in range(200):
-            time.sleep(0.3)
-            h = ctypes.windll.kernel32.CreateMutexW(None, True, _MUTEX_NAME)
-            err = ctypes.windll.kernel32.GetLastError()
-            if err != 183:
-                # Успех! Старый процесс освободил мьютекс, мы стали владельцами
-                logger.info("[PID=%d] Мьютекс захвачен после %d попыток (%.1f сек)", pid, attempt + 1, (attempt + 1) * 0.3)
-                break
-            # Мьютекс всё ещё существует — закрываем handle и ждём
-            ctypes.windll.kernel32.CloseHandle(h)
-            h = None
-            if attempt % 20 == 0 and attempt > 0:
-                logger.info("[PID=%d] Ожидание мьютекса... %d сек (попытка %d/200)", pid, int(attempt * 0.3), attempt)
-        else:
-            logger.error("[PID=%d] Таймаут ожидания мьютекса (60 сек, 200 попыток)", pid)
-
-    return h, err
+def _acquire_mutex(is_elevate: bool = False):
+    """Обёртка над acquire_mutex с передачей флага elevate."""
+    return _mutex_acquire(_MUTEX_NAME, is_elevate=is_elevate)
 
 
 # NOTE: Мьютекс НЕ захватывается на уровне модуля — это мешает тестам.
 # Захват происходит в main() перед запуском GUI.
+
 
 # ---------------------------------------------------------------------------
 # Проверка версии Windows (требуется Windows 10 64-bit или новее)
@@ -183,9 +173,10 @@ def _check_windows_version():
     """Возвращает (True, version_info) если версия Windows >= 10 (build 10240), иначе (False, None)."""
     try:
         ntdll = ctypes.windll.ntdll
-        # RtlGetVersion заполняет RTL_OSVERSIONINFOW
-        class RTL_OSVERSIONINFOW(ctypes.Structure):
-            _fields_ = [
+
+        # RtlGetVersion заполняет RtlOsVersionInfoW
+        class RtlOsVersionInfoW(ctypes.Structure):
+            _fields_ = [  # noqa: RUF012
                 ("dwOSVersionInfoSize", ctypes.c_ulong),
                 ("dwMajorVersion", ctypes.c_ulong),
                 ("dwMinorVersion", ctypes.c_ulong),
@@ -193,26 +184,28 @@ def _check_windows_version():
                 ("dwPlatformId", ctypes.c_ulong),
                 ("szCSDVersion", ctypes.c_wchar * 128),
             ]
-        ver = RTL_OSVERSIONINFOW()
+
+        ver = RtlOsVersionInfoW()
         ver.dwOSVersionInfoSize = ctypes.sizeof(ver)
         ret = ntdll.RtlGetVersion(ctypes.byref(ver), ctypes.byref(ctypes.c_int()))
         if ret != 0:  # NTSTATUS success
             return False, None
         is_ok = ver.dwMajorVersion >= 10 and ver.dwBuildNumber >= 10240
         return is_ok, ver
-    except Exception:
+    except (OSError, AttributeError):
         return False, None
+
 
 is_ok, ver = _check_windows_version()
 if not is_ok:
     if sys.stderr:
-        sys.stderr.write(
-            "Ошибка: требуется Windows 10 (build 10240) или новее.\n"
-        )
+        sys.stderr.write("Ошибка: требуется Windows 10 (build 10240) или новее.\n")
     else:
         if ver is not None:
             version_str = "Ваша версия: %d.%d (build %d)" % (
-                ver.dwMajorVersion, ver.dwMinorVersion, ver.dwBuildNumber
+                ver.dwMajorVersion,
+                ver.dwMinorVersion,
+                ver.dwBuildNumber,
             )
         else:
             version_str = "Ваша версия: неизвестна"
@@ -222,11 +215,11 @@ if not is_ok:
         )
     sys.exit(1)
 
-# noqa: E402 — эти импорты НАМЕРЕННО стоят не в начале файла: sandbox-флаг
+
 # должен быть вычислен (_parse_sandbox_mode выше) до импорта scanner/cleaner.
 import customtkinter as ctk  # noqa: E402
 
-from applog import get_logger, get_app_dir  # noqa: E402
+from applog import get_app_dir, get_logger  # noqa: E402
 from cleaner import (  # noqa: E402
     delete_layout,
     disable_language_sync,
@@ -236,16 +229,18 @@ from cleaner import (  # noqa: E402
     plan_layout_removal,
     restore_backup,
 )
+from gui_widgets import ActionButtons, AdminBanner, StatusBar  # noqa: E402
 from scanner import (  # noqa: E402
     get_affected_branches,
     get_layout_name,
     scan_keyboard_layouts,
 )
-from gui_widgets import ActionButtons, AdminBanner, StatusBar  # noqa: E402
 
 # Синхронизируем SANDBOX_MODE в модулях scanner/cleaner
 # (они импортируются выше — здесь уже доступны)
 _apply_sandbox_to_modules(SANDBOX_MODE)
+
+import contextlib
 
 import i18n  # noqa: E402
 import ui_theme as theme  # noqa: E402
@@ -289,11 +284,14 @@ PS_SECTION_PATH = "PowerShell\\Get-WinUserLanguageList"
 # Вспомогательные функции
 # ---------------------------------------------------------------------------
 
+
 def _build_layout_name(klid: str) -> str:
     """Сформировать строку отображения раскладки: Имя (KLID)."""
     # Динамическое имя из HKLM ("Layout Text") + fallback на LAYOUT_MAP
     name = get_layout_name(klid)
-    if name and not name.endswith(f"({klid})"):
+    if name and name.endswith(f"({klid})"):
+        return name
+    if name:
         return f"{name} ({klid})"
     return f"Layout ({klid})"
 
@@ -301,6 +299,7 @@ def _build_layout_name(klid: str) -> str:
 # ---------------------------------------------------------------------------
 # Главное приложение
 # ---------------------------------------------------------------------------
+
 
 def _active_lang_cache(klid: str, layouts_data: dict) -> bool:
     """
@@ -350,7 +349,7 @@ class KeyboardLayoutCleaner(ctk.CTk):
     def __init__(self) -> None:
         super().__init__()
 
-        self.title(f"{_t('app_title')}  v{APP_VERSION}")
+        self.title(f"{_t('app_title')}  v{app_version}")
         self.geometry("900x780")
         self.minsize(820, 660)
 
@@ -396,6 +395,33 @@ class KeyboardLayoutCleaner(ctk.CTk):
         self._build_ui()
         # Цикл опроса очереди результатов (UI-поток)
         self.after(POLL_INTERVAL_MS, self._process_ui_queue)
+
+    # ------------------------------------------------------------------
+    # Системный трей (system tray)
+    # ------------------------------------------------------------------
+
+    def _show_window(self) -> None:
+        """Показать главное окно из трея."""
+        try:
+            self.deiconify()
+            self.lift()
+            self.focus_force()
+            logger.info("[PID=%d] Окно показано из трея", self.pid)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("Ошибка показа окна из трея: %s", exc)
+
+    def _hide_window(self) -> None:
+        """Скрыть главное окно в трей."""
+        try:
+            self.withdraw()
+            logger.info("[PID=%d] Окно скрыто в трей", self.pid)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("Ошибка скрытия окна: %s", exc)
+
+    def quit_from_tray(self) -> None:
+        """Закрыть приложение (вызывается из системного трея)."""
+        self._release_mutex_and_exit()
+        self.destroy()
 
     # ------------------------------------------------------------------
     # UI Layout
@@ -534,9 +560,7 @@ class KeyboardLayoutCleaner(ctk.CTk):
             # «резиновая» — expand=True растянет её до свободного места)
             height=110,
         )
-        self.detail_text.pack(
-            fill="both", expand=True, padx=5, pady=(2, 5), ipady=5
-        )
+        self.detail_text.pack(fill="both", expand=True, padx=5, pady=(2, 5), ipady=5)
         self._config_detail_tags()
         self._render_initial_hint()
 
@@ -621,14 +645,12 @@ class KeyboardLayoutCleaner(ctk.CTk):
 
     def _apply_static_texts(self) -> None:
         """Перевести статические элементы (при смене языка)."""
-        self.title(f"{_t('app_title')}  v{APP_VERSION}")
+        self.title(f"{_t('app_title')}  v{app_version}")
         # Подписи переключателей вида (интерфейс/яркость) в шапке
         if self.admin_banner:
             self.admin_banner.apply_language()
         # ⏳-состояния не трогаем: временный текст вернётся сам по завершении
-        if self.scan_button and not str(
-            self.scan_button.cget("text")
-        ).startswith("⏳"):
+        if self.scan_button and not str(self.scan_button.cget("text")).startswith("⏳"):
             self.scan_button.configure(
                 text=_t("btn_rescan" if self._scan_done else "btn_scan")
             )
@@ -646,9 +668,7 @@ class KeyboardLayoutCleaner(ctk.CTk):
             self.details_title_label.configure(text=_t("details_title"))
         if self.list_title_label:
             if not self._scan_done:
-                self.list_title_label.configure(
-                    text=_t("list_placeholder_before_scan")
-                )
+                self.list_title_label.configure(text=_t("list_placeholder_before_scan"))
             elif self.layouts_data:
                 self.list_title_label.configure(
                     text=_t("list_title_found", count=len(self.layouts_data))
@@ -661,11 +681,9 @@ class KeyboardLayoutCleaner(ctk.CTk):
         # Плейсхолдер списка (виден только до первого сканирования)
         if self._list_placeholder:
             try:
-                self._list_placeholder.configure(
-                    text=_t("list_placeholder_after_scan")
-                )
-            except Exception:  # noqa: BLE001
-                pass
+                self._list_placeholder.configure(text=_t("list_placeholder_after_scan"))
+            except Exception:
+                logger.exception("Не удалось обновить placeholder списка")
         # Панель деталей: перерисовать текущее состояние
         if not self.layouts_data:
             self._render_initial_hint()
@@ -698,9 +716,7 @@ class KeyboardLayoutCleaner(ctk.CTk):
         if not self._view_switch_allowed():
             self._set_status(_t("status_busy_wait"))
             return
-        theme.set_theme(
-            "terminal" if theme.current_theme() == "classic" else "classic"
-        )
+        theme.set_theme("terminal" if theme.current_theme() == "classic" else "classic")
         self._rebuild_ui()
 
     def _on_brightness_change(self, code: str) -> None:
@@ -735,7 +751,7 @@ class KeyboardLayoutCleaner(ctk.CTk):
     # Подсветка рекомендуемого действия (этапы работы)
     # ------------------------------------------------------------------
 
-    _STAGE_HINTS: dict[str, str] = {
+    _STAGE_HINTS: ClassVar[dict[str, str]] = {
         "start": "stage_hint_start",
         "choose": "stage_hint_choose",
         "delete": "stage_hint_delete",
@@ -755,9 +771,8 @@ class KeyboardLayoutCleaner(ctk.CTk):
         elif stage == "choose":
             if self.layouts_list_frame:
                 self._start_pulse("border", self.layouts_list_frame, theme.P("list"))
-        elif stage == "delete":
-            if self.delete_button:
-                self._start_pulse("button", self.delete_button, theme.P("delete"))
+        elif stage == "delete" and self.delete_button:
+            self._start_pulse("button", self.delete_button, theme.P("delete"))
 
     # ------------------------------------------------------------------
     # Прогресс-бар для длительных операций
@@ -775,9 +790,7 @@ class KeyboardLayoutCleaner(ctk.CTk):
         if self.status_bar:
             self.status_bar.progress_stop()
 
-    def _start_pulse(
-        self, kind: str, widget: Any, colors: tuple[str, str]
-    ) -> None:
+    def _start_pulse(self, kind: str, widget: Any, colors: tuple[str, str]) -> None:
         """Запустить попеременную подсветку элемента (базовый ↔ акцент)."""
         self._pulse_state = {
             "kind": kind,
@@ -863,7 +876,7 @@ class KeyboardLayoutCleaner(ctk.CTk):
                 layouts = scan_keyboard_layouts()
                 # layouts_data обновляется только в UI-потоке (через очередь)
                 self._post(self._after_scan_success, layouts)
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001
                 self._post(self._after_scan_error, str(exc))
 
         threading.Thread(target=_scan_thread, daemon=True).start()
@@ -899,9 +912,7 @@ class KeyboardLayoutCleaner(ctk.CTk):
         """Обработка успешного завершения сканирования."""
         self._progress_stop()
         if self.scan_button:
-            self.scan_button.configure(
-                text=_t("btn_rescan"), state="normal"
-            )
+            self.scan_button.configure(text=_t("btn_rescan"), state="normal")
         self._scan_done = True
         if self.restore_button:
             self.restore_button.configure(state="normal")
@@ -1012,7 +1023,7 @@ class KeyboardLayoutCleaner(ctk.CTk):
         # 125–150% DPI панель деталей выглядит мельче остального интерфейса.
         try:
             scale = float(ctk.ScalingTracker.get_window_scaling(self))
-        except Exception:
+        except (ValueError, AttributeError, TypeError):
             scale = 1.0
         if scale <= 0:
             scale = 1.0
@@ -1027,7 +1038,10 @@ class KeyboardLayoutCleaner(ctk.CTk):
             ui = mono
         tags: dict[str, tuple[ctk.CTkFont, str]] = {
             # Заголовки и подписи
-            "h1": (ctk.CTkFont(family=ui, size=px(19), weight="bold"), theme.C("tag_h1")),
+            "h1": (
+                ctk.CTkFont(family=ui, size=px(19), weight="bold"),
+                theme.C("tag_h1"),
+            ),
             "sub": (ctk.CTkFont(family=ui, size=px(14)), theme.C("tag_sub")),
             "legend": (ctk.CTkFont(family=ui, size=px(12)), theme.C("tag_legend")),
             "dim": (ctk.CTkFont(family=ui, size=px(13)), theme.C("tag_dim")),
@@ -1037,7 +1051,10 @@ class KeyboardLayoutCleaner(ctk.CTk):
                 theme.C("tag_path"),
             ),
             # Статусы обнаружения
-            "ok": (ctk.CTkFont(family=ui, size=px(15), weight="bold"), theme.C("tag_ok")),
+            "ok": (
+                ctk.CTkFont(family=ui, size=px(15), weight="bold"),
+                theme.C("tag_ok"),
+            ),
             "miss": (
                 ctk.CTkFont(family=ui, size=px(14), slant="italic"),
                 theme.C("tag_miss"),
@@ -1078,9 +1095,57 @@ class KeyboardLayoutCleaner(ctk.CTk):
             if hasattr(tb, "_textbox"):
                 tb._textbox.tag_config(name, font=font)  # type: ignore[attr-defined]
             else:
-                logger.debug(
-                    "tag font not applied (no _textbox): %s", name
-                )
+                logger.debug("tag font not applied (no _textbox): %s", name)
+
+    def _render_row_chunks(
+        self,
+        path: str,
+        admin_required: bool,
+        note: str,
+        by_path: dict[str, list[str]],
+        admin: bool,
+    ) -> tuple[list[tuple[str, str]], bool]:
+        """
+        Сформировать chunks для одной строки (реестрового раздела).
+
+        Возвращает (chunks, hku_blocked), где hku_blocked — флаг,
+        что раздел требует админ-прав, прав нет, и значения найдены
+        (значит HKCU\\Software\\HKU\\ заблокирован).
+        """
+        admin_note_tag: str | None = "admin" if (admin_required and not admin) else None
+        hku_blocked = bool(admin_note_tag and path in by_path and by_path[path])
+
+        chunks: list[tuple[str, str]] = []
+        values = by_path.get(path, [])
+        mark = "[+]" if values else "[ ]"
+        mark_tag = "ok" if values else "miss"
+        status, status_tag = (
+            (_t("status_found", count=len(values)), "ok")
+            if values
+            else (_t("status_not_found"), "miss")
+        )
+
+        chunks.append((f"{mark} ", mark_tag))
+        chunks.append((f"{path}\n", "path"))
+        chunks.append(("        " + _t("label_status"), "dim"))
+        chunks.append((status, status_tag))
+        if note:
+            chunks.append((f"  ({note})", "note"))
+        chunks.append(("\n", "dim"))
+
+        if admin_note_tag:
+            chunks.append(("        " + _t("label_needs_admin"), "admin"))
+            chunks.append((_t("label_skipped_no_admin") + "\n", "blocked"))
+
+        # Значения — ЕДИНЫЙ chunk с тегом val: 7 вставок → 1
+        val_lines = ["            " + _t("details_value", value=v) for v in values[:6]]
+        if len(values) > 6:
+            val_lines.append("            " + _t("details_more", count=len(values) - 6))
+        if val_lines:
+            chunks.append(("\n".join(val_lines) + "\n", "val"))
+        chunks.append(("\n", "dim"))
+
+        return chunks, hku_blocked
 
     def _show_layout_details(self, klid: str) -> None:
         """
@@ -1095,7 +1160,7 @@ class KeyboardLayoutCleaner(ctk.CTk):
         # При смене DPI/масштабирования экрана применяем теги заново
         try:
             scale = float(ctk.ScalingTracker.get_window_scaling(self))
-        except Exception:
+        except (ValueError, AttributeError, TypeError):
             scale = 1.0
         if scale != getattr(self, "_detail_font_scale", None):
             self._config_detail_tags()
@@ -1106,9 +1171,7 @@ class KeyboardLayoutCleaner(ctk.CTk):
         locations = self.layouts_data.get(klid, [])
         by_path: dict[str, list[str]] = {}
         for loc in locations:
-            by_path.setdefault(loc.get("path", ""), []).append(
-                loc.get("value", "")
-            )
+            by_path.setdefault(loc.get("path", ""), []).append(loc.get("value", ""))
 
         admin = is_admin()
         layout_name = _build_layout_name(klid)
@@ -1129,10 +1192,7 @@ class KeyboardLayoutCleaner(ctk.CTk):
         chunks.append((divider + "\n", "dim"))
         chunks.append(
             (
-                _t("legend_found")
-                + "      "
-                + _t("legend_not_found")
-                + "\n",
+                _t("legend_found") + "      " + _t("legend_not_found") + "\n",
                 "legend",
             )
         )
@@ -1151,44 +1211,12 @@ class KeyboardLayoutCleaner(ctk.CTk):
 
         hku_blocked = False
         for path, admin_required, note in rows:
-            values = by_path.get(path, [])
-            mark = "[+]" if values else "[ ]"
-            mark_tag = "ok" if values else "miss"
-            if values:
-                status, status_tag = _t("status_found", count=len(values)), "ok"
-            else:
-                status, status_tag = _t("status_not_found"), "miss"
-
-            chunks.append((f"{mark} ", mark_tag))
-            chunks.append((f"{path}\n", "path"))
-            chunks.append(("        " + _t("label_status"), "dim"))
-            chunks.append((status, status_tag))
-            if note:
-                chunks.append((f"  ({note})", "note"))
-            chunks.append(("\n", "dim"))
-            if admin_required and not admin:
-                # Предупреждение — только когда прав нет. При запуске от
-                # администратора раздел ведёт себя как обычный, и лишние
-                # напоминания не показываем.
-                chunks.append(("        " + _t("label_needs_admin"), "admin"))
-                chunks.append(
-                    (_t("label_skipped_no_admin") + "\n", "blocked")
-                )
-                if values:
-                    hku_blocked = True
-            # Значения — ЕДИНЫЙ chunk с тегом val: 7 вставок → 1
-            val_lines = [
-                "            " + _t("details_value", value=v)
-                for v in values[:6]
-            ]
-            if len(values) > 6:
-                val_lines.append(
-                    "            "
-                    + _t("details_more", count=len(values) - 6)
-                )
-            if val_lines:
-                chunks.append(("\n".join(val_lines) + "\n", "val"))
-            chunks.append(("\n", "dim"))
+            row_chunks, hku = self._render_row_chunks(
+                path, admin_required, note, by_path, admin
+            )
+            chunks.extend(row_chunks)
+            if hku:
+                hku_blocked = True
 
         if hku_blocked:
             chunks.append((_t("warn_title") + "\n", "warn"))
@@ -1293,7 +1321,7 @@ class KeyboardLayoutCleaner(ctk.CTk):
             try:
                 plan = plan_layout_removal(klid)
                 self._post(self._after_plan, plan)
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001
                 self._post(self._after_delete_error, str(exc))
 
         threading.Thread(target=_plan_thread, daemon=True).start()
@@ -1312,9 +1340,7 @@ class KeyboardLayoutCleaner(ctk.CTk):
         )
         if not confirm:
             if self.delete_button:
-                self.delete_button.configure(
-                    text=_t("btn_delete"), state="normal"
-                )
+                self.delete_button.configure(text=_t("btn_delete"), state="normal")
             if self.restore_button:
                 self.restore_button.configure(state="normal")
             self._set_status(_t("status_delete_cancelled"))
@@ -1334,7 +1360,7 @@ class KeyboardLayoutCleaner(ctk.CTk):
             try:
                 report = delete_layout(klid)
                 self._post(self._after_delete, report)
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001
                 self._post(self._after_delete_error, str(exc))
 
         threading.Thread(target=_delete_thread, daemon=True).start()
@@ -1367,9 +1393,7 @@ class KeyboardLayoutCleaner(ctk.CTk):
                 for pkey in profile_keys[:6]:
                     lines.append(_t("plan_profile_line", path=pkey))
                 if len(profile_keys) > 6:
-                    lines.append(
-                        _t("plan_value_more", count=len(profile_keys) - 6)
-                    )
+                    lines.append(_t("plan_value_more", count=len(profile_keys) - 6))
         if not found_any:
             lines.append(_t("plan_no_matches"))
 
@@ -1386,9 +1410,7 @@ class KeyboardLayoutCleaner(ctk.CTk):
         elif ps.get("available"):
             lines.append(_t("plan_ps_nochange"))
         else:
-            lines.append(
-                _t("plan_ps_unavailable", detail=ps.get("detail", ""))
-            )
+            lines.append(_t("plan_ps_unavailable", detail=ps.get("detail", "")))
         if plan.get("ctfmon_restart"):
             lines.append(_t("plan_ctfmon"))
         if _active_lang_cache(plan["klid"], self.layouts_data):
@@ -1405,9 +1427,7 @@ class KeyboardLayoutCleaner(ctk.CTk):
         """Обработка результата удаления."""
         self._progress_stop()
         if self.delete_button:
-            self.delete_button.configure(
-                text=_t("btn_delete"), state="normal"
-            )
+            self.delete_button.configure(text=_t("btn_delete"), state="normal")
         if self.restore_button:
             self.restore_button.configure(state="normal")
 
@@ -1463,7 +1483,11 @@ class KeyboardLayoutCleaner(ctk.CTk):
             msg += (
                 "\n"
                 + _t("dlg_result_cloud_sync")
-                + ("✓ " + sync_block_detail if sync_blocked else "✗ " + sync_block_detail)
+                + (
+                    "✓ " + sync_block_detail
+                    if sync_blocked
+                    else "✗ " + sync_block_detail
+                )
             )
 
             # Индикатор синхронизации Экрана приветствия
@@ -1481,13 +1505,9 @@ class KeyboardLayoutCleaner(ctk.CTk):
                     "dlg_result_backup_partial", branches=", ".join(partial)
                 )
             if power_sync:
-                msg += (
-                    _t("dlg_advice_logoff")
-                )
+                msg += _t("dlg_advice_logoff")
             else:
-                msg += (
-                    _t("dlg_advice_ps_failed")
-                )
+                msg += _t("dlg_advice_ps_failed")
             retry = report.get("retry_cleaned", 0)
             if retry:
                 msg += _t("dlg_advice_ctfmon", count=retry)
@@ -1510,11 +1530,9 @@ class KeyboardLayoutCleaner(ctk.CTk):
                 welcome_detail,
             )
         else:
-            msg = (
-                _t(
-                    "dlg_delete_failed_nosync",
-                    detail=sync_detail or "нет данных",
-                )
+            msg = _t(
+                "dlg_delete_failed_nosync",
+                detail=sync_detail or "нет данных",
             )
             self._set_status(_t("status_delete_failed"))
             logger.warning("Удаление не удалось: %s", report)
@@ -1537,9 +1555,7 @@ class KeyboardLayoutCleaner(ctk.CTk):
         """Обработка ошибки удаления."""
         self._progress_stop()
         if self.delete_button:
-            self.delete_button.configure(
-                text=_t("btn_delete"), state="normal"
-            )
+            self.delete_button.configure(text=_t("btn_delete"), state="normal")
         if self.restore_button:
             self.restore_button.configure(state="normal")
         self._set_status(_t("status_delete_error"))
@@ -1595,10 +1611,8 @@ class KeyboardLayoutCleaner(ctk.CTk):
 
         def _grab() -> None:
             # Окно могло ещё не отрисоваться — пробуем безопасно
-            try:
+            with contextlib.suppress(Exception):
                 dialog.grab_set()
-            except Exception:
-                pass
 
         dialog.after(120, _grab)
 
@@ -1632,11 +1646,17 @@ class KeyboardLayoutCleaner(ctk.CTk):
 
         def render_preview(_value: str | None = None) -> None:
             b = selected()
-            lines = [_t("dlg_restore_file", path=b["reg_path"]), "", _t("dlg_restore_sections")]
+            lines = [
+                _t("dlg_restore_file", path=b["reg_path"]),
+                "",
+                _t("dlg_restore_sections"),
+            ]
             if b["sections"]:
                 lines += [f"  • {s}" for s in b["sections"][:12]]
                 if len(b["sections"]) > 12:
-                    lines.append(_t("dlg_restore_more_sections", count=len(b["sections"]) - 12))
+                    lines.append(
+                        _t("dlg_restore_more_sections", count=len(b["sections"]) - 12)
+                    )
             else:
                 lines.append(_t("dlg_restore_no_sections"))
             lines.append("")
@@ -1646,9 +1666,7 @@ class KeyboardLayoutCleaner(ctk.CTk):
                 else _t("dlg_restore_langlist_no")
             )
             if b["has_hku"] and not is_admin():
-                lines.append(
-                    _t("dlg_restore_uac_note")
-                )
+                lines.append(_t("dlg_restore_uac_note"))
             preview.configure(state="normal")
             preview.delete("1.0", "end")
             preview.insert("1.0", "\n".join(lines))
@@ -1677,15 +1695,15 @@ class KeyboardLayoutCleaner(ctk.CTk):
 
         def do_restore() -> None:
             b = selected()
-            confirm = (
-                _t("dlg_restore_confirm", path=b["reg_path"])
-            )
+            confirm = _t("dlg_restore_confirm", path=b["reg_path"])
             if b["json_path"]:
                 confirm += _t("dlg_restore_confirm_langlist")
             if b["has_hku"] and not is_admin():
                 confirm += _t("dlg_restore_confirm_uac")
             confirm += _t("dlg_restore_confirm_overwrite")
-            if not messagebox.askyesno(_t("dlg_restore_confirm_title"), confirm, parent=dialog):
+            if not messagebox.askyesno(
+                _t("dlg_restore_confirm_title"), confirm, parent=dialog
+            ):
                 return
             dialog.destroy()
             self._start_restore(b)
@@ -1718,9 +1736,7 @@ class KeyboardLayoutCleaner(ctk.CTk):
         """Выполнить восстановление в фоновом потоке."""
         self._set_status(_t("status_restoring"))
         if self.restore_button:
-            self.restore_button.configure(
-                state="disabled", text=_t("btn_restore_busy")
-            )
+            self.restore_button.configure(state="disabled", text=_t("btn_restore_busy"))
         if self.scan_button:
             self.scan_button.configure(state="disabled")
         if self.delete_button:
@@ -1733,14 +1749,12 @@ class KeyboardLayoutCleaner(ctk.CTk):
             try:
                 result = restore_backup(reg_path, json_path)
                 self._post(self._after_restore, result, backup)
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001
                 self._post(self._after_restore_error, str(exc))
 
         threading.Thread(target=_restore_thread, daemon=True).start()
 
-    def _after_restore(
-        self, result: dict[str, Any], backup: dict[str, Any]
-    ) -> None:
+    def _after_restore(self, result: dict[str, Any], backup: dict[str, Any]) -> None:
         """Обработка результата восстановления."""
         self._enable_after_restore()
         lang_ok = result.get("langlist_restored")
@@ -1752,9 +1766,7 @@ class KeyboardLayoutCleaner(ctk.CTk):
                 msg += _t("dlg_restore_done_langlist")
             msg += _t("dlg_restore_advice")
             self._set_status(_t("status_restore_done"))
-            logger.info(
-                "Восстановление из %s: успех", backup.get("reg_path", "?")
-            )
+            logger.info("Восстановление из %s: успех", backup.get("reg_path", "?"))
             messagebox.showinfo(_t("dlg_result_title"), msg)
         else:
             detail = result.get("detail") or (
@@ -1782,9 +1794,7 @@ class KeyboardLayoutCleaner(ctk.CTk):
     def _enable_after_restore(self) -> None:
         """Вернуть кнопкам рабочее состояние после восстановления."""
         if self.restore_button:
-            self.restore_button.configure(
-                state="normal", text=_t("btn_restore")
-            )
+            self.restore_button.configure(state="normal", text=_t("btn_restore"))
         if self.scan_button:
             self.scan_button.configure(state="normal")
         if self.delete_button:
@@ -1802,7 +1812,7 @@ class KeyboardLayoutCleaner(ctk.CTk):
                 layouts = scan_keyboard_layouts()
                 self._post(self._apply_scan_results, layouts)
                 self._post(self._finalize_refresh, layouts)
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001
                 self._post(self._refresh_error, str(exc))
 
         threading.Thread(target=_refresh_thread, daemon=True).start()
@@ -1810,9 +1820,7 @@ class KeyboardLayoutCleaner(ctk.CTk):
     def _finalize_refresh(self, layouts: dict[str, list[dict[str, str]]]) -> None:
         """Завершение обновления: кнопки, статус, сброс выбора."""
         if self.scan_button:
-            self.scan_button.configure(
-                text=_t("btn_rescan"), state="normal"
-            )
+            self.scan_button.configure(text=_t("btn_rescan"), state="normal")
         self._scan_done = True
         # Итоговое сообщение: удалённая раскладка исчезла из списка?
         if self.current_layout_klid not in layouts:
@@ -1823,14 +1831,11 @@ class KeyboardLayoutCleaner(ctk.CTk):
     def _refresh_error(self, error_msg: str) -> None:
         """Ошибка пересканирования — больше не «тихая»: лог и статус."""
         if self.scan_button:
-            self.scan_button.configure(
-                text=_t("btn_rescan"), state="normal"
-            )
+            self.scan_button.configure(text=_t("btn_rescan"), state="normal")
         self._scan_done = True
         self._set_status(_t("status_refresh_error"))
         self._set_stage("choose")
         logger.warning("Пересканирование после удаления не удалось: %s", error_msg)
-
 
     # ------------------------------------------------------------------
     # Перезапуск как администратор
@@ -1849,9 +1854,7 @@ class KeyboardLayoutCleaner(ctk.CTk):
         pid = os.getpid()
         logger.info("[PID=%d] Начат процесс перезапуска от имени администратора", pid)
 
-        self.admin_btn.configure(
-            state="disabled", text=_t("btn_restart_admin_busy")
-        )
+        self.admin_btn.configure(state="disabled", text=_t("btn_restart_admin_busy"))
 
         result_code = None
         try:
@@ -1863,14 +1866,16 @@ class KeyboardLayoutCleaner(ctk.CTk):
             if getattr(sys, "frozen", False):
                 # Сборка exe: перезапускаем сам исполняемый файл
                 target = sys.executable
-                params = sandbox_flag
+                params = f"{sandbox_flag} --elevate"
             else:
                 # Явное оборачивание пути в двойные кавычки — корректно
                 # обрабатывает пробелы и спецсимволы в пути к скрипту.
                 target = sys.executable
-                params = f'"{os.path.abspath(__file__)}"{sandbox_flag}'
+                params = f'"{os.path.abspath(__file__)}" {sandbox_flag} --elevate'
 
-            logger.info("[PID=%d] ShellExecuteW: target=%s, params=%s", pid, target, params)
+            logger.info(
+                "[PID=%d] ShellExecuteW: target=%s, params=%s", pid, target, params
+            )
 
             # ShellExecuteW возвращает >32 при успехе и код ошибки (<=32)
             # при неудаче — например, если пользователь отклонил запрос UAC.
@@ -1887,11 +1892,11 @@ class KeyboardLayoutCleaner(ctk.CTk):
 
             if result_code <= 32:
                 # Не закрываем приложение — сообщаем и продолжаем работу
-                logger.warning("[PID=%d] ShellExecuteW не удался (код=%d)", pid, result_code)
-                self._is_elevating = False
-                self.admin_btn.configure(
-                    state="normal", text=_t("btn_restart_admin")
+                logger.warning(
+                    "[PID=%d] ShellExecuteW не удался (код=%d)", pid, result_code
                 )
+                self._is_elevating = False
+                self.admin_btn.configure(state="normal", text=_t("btn_restart_admin"))
                 self._set_status(_t("status_elevation_cancelled"))
                 self._show_elevation_error(result_code)
                 return
@@ -1901,12 +1906,10 @@ class KeyboardLayoutCleaner(ctk.CTk):
             logger.info("[PID=%d] Запуск успешен, закрываем мьютекс и выходим", pid)
             self._release_mutex_and_exit()
 
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             logger.error("[PID=%d] Ошибка при перезапуске: %s", pid, exc)
             self._is_elevating = False
-            self.admin_btn.configure(
-                state="normal", text=_t("btn_restart_admin")
-            )
+            self.admin_btn.configure(state="normal", text=_t("btn_restart_admin"))
             self._set_status(_t("status_elevation_error"))
             messagebox.showerror(
                 _t("dlg_error_title"),
@@ -1920,25 +1923,28 @@ class KeyboardLayoutCleaner(ctk.CTk):
         Вынесено в отдельный метод для гарантированного закрытия мьютекса
         при любом сценарии выхода.
         """
-        global _mutex_handle
         pid = os.getpid()
 
         logger.info("[PID=%d] Закрываем мьютекс и завершаем процесс...", pid)
 
         try:
             # Закрываем дескриптор мьютекса
-            if _mutex_handle and _mutex_handle != 0:
-                ctypes.windll.kernel32.CloseHandle(_mutex_handle)
-                _mutex_handle = None
-                logger.info("[PID=%d] Мьютекс закрыт", pid)
-        except Exception as exc:
+            handle = self._mutex_handle
+            if handle and handle != 0:
+                err = _mutex_release(handle)
+                self._mutex_handle = None
+                if err == 0:
+                    logger.info("[PID=%d] Мьютекс закрыт", pid)
+                else:
+                    logger.warning("[PID=%d] CloseHandle вернул ошибку %d", pid, err)
+        except Exception as exc:  # noqa: BLE001
             logger.error("[PID=%d] Ошибка при закрытии мьютекса: %s", pid, exc)
 
         try:
             # Уничтожаем GUI
             self.destroy()
             logger.info("[PID=%d] GUI уничтожен", pid)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             logger.error("[PID=%d] Ошибка при уничтожении GUI: %s", pid, exc)
 
         # Чистое завершение
@@ -1948,7 +1954,7 @@ class KeyboardLayoutCleaner(ctk.CTk):
     @staticmethod
     def _show_elevation_error(result_code: int) -> None:
         """Показать понятное сообщение об ошибке UAC по коду ShellExecuteW."""
-        _ERROR_MESSAGES: dict[int, str] = {
+        error_messages: dict[int, str] = {
             2: "dlg_elevation_error_file_not_found",
             3: "dlg_elevation_error_path_not_found",
             5: "dlg_elevation_access_denied",
@@ -1956,8 +1962,8 @@ class KeyboardLayoutCleaner(ctk.CTk):
             31: "dlg_elevation_no_assoc",
             1136: "dlg_elevation_error_bad_netpath",
         }
-        if result_code in _ERROR_MESSAGES:
-            key = _ERROR_MESSAGES[result_code]
+        if result_code in error_messages:
+            key = error_messages[result_code]
             msg = _t(key)
         else:
             msg = _t("dlg_elevation_generic_error", code=result_code)
@@ -1965,7 +1971,6 @@ class KeyboardLayoutCleaner(ctk.CTk):
             _t("dlg_elevation_title"),
             msg,
         )
-
 
     # ------------------------------------------------------------------
     # Утилиты
@@ -1983,6 +1988,7 @@ class KeyboardLayoutCleaner(ctk.CTk):
 # Точка входа
 # ---------------------------------------------------------------------------
 
+
 def main() -> None:
     """Запустить приложение."""
     args = parse_args()
@@ -1996,11 +2002,10 @@ def main() -> None:
         cleaner.activate_sandbox()
 
     # Захватываем мьютекс — защита от параллельных запусков
-    global _mutex_handle, _last_error
-    _mutex_handle, _last_error = _acquire_mutex()
-    logger.info("Итог: handle=%s, error=%d", _mutex_handle, _last_error)
+    mutex_handle, last_error = _acquire_mutex(is_elevate=args.elevate)
+    logger.info("Итог: handle=%s, error=%d", mutex_handle, last_error)
 
-    if _last_error == 183:
+    if last_error == 183:
         # Старый процесс так и не освободил mutex за отведённое время.
         logger.error("Не удалось захватить мьютекс за 60 секунд")
         if sys.stderr:
@@ -2011,35 +2016,40 @@ def main() -> None:
         else:
             try:
                 from tkinter import messagebox
+
                 messagebox.showerror(
                     "Ошибка",
                     "Приложение уже запущено.\n\n"
                     "Если это не так, перезагрузите компьютер.",
                 )
             except Exception:
-                pass
+                logger.exception("Не удалось показать messagebox о дубликате процесса")
         sys.exit(1)
 
-    if _mutex_handle == 0 or _mutex_handle is None:
-        logger.error("CreateMutexW вернул NULL (error=%d)", _last_error)
+    if mutex_handle == 0 or mutex_handle is None:
+        logger.error("CreateMutexW вернул NULL (error=%d)", last_error)
         if sys.stderr:
             sys.stderr.write(
-                "Ошибка: не удалось создать mutex (GetLastError=%d).\n" % _last_error
+                "Ошибка: не удалось создать mutex (GetLastError=%d).\n" % last_error
             )
         else:
             try:
                 from tkinter import messagebox
+
                 messagebox.showerror(
                     "Ошибка",
-                    "Не удалось создать mutex (GetLastError=%d)." % _last_error,
+                    "Не удалось создать mutex (GetLastError=%d)." % last_error,
                 )
             except Exception:
-                pass
+                logger.exception("Не удалось показать messagebox о создании mutex")
         sys.exit(1)
 
     logger.info("Мьютекс успешно захвачен, приложение запущено")
-    get_logger().info("Приложение запущено (журнал: %s)", get_app_dir() / "layout_cleaner.log")
+    get_logger().info(
+        "Приложение запущено (журнал: %s)", get_app_dir() / "layout_cleaner.log"
+    )
     app = KeyboardLayoutCleaner()
+    app._mutex_handle = mutex_handle
     app.mainloop()
 
 

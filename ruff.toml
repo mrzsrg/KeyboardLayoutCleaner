@@ -28,6 +28,7 @@ ignore = [
     "RUF001",  # ambiguous-unicode-character-string (false positives for Cyrillic)
     "RUF002",  # ambiguous-unicode-character-docstring (false positives for Cyrillic)
     "RUF003",  # ambiguous-unicode-character-comment (false positives for Cyrillic)
+    "N999",  # invalid module name (project name contains uppercase)
 ]
 
 [lint.mccabe]

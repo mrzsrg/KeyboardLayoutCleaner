@@ -16,6 +16,7 @@ from typing import Any
 import applog
 from config import (
     _SANDBOX_ROOT,
+    TIMEOUTS,
     disable_sandbox,
     enable_sandbox,
     is_sandbox_enabled,
@@ -599,12 +600,14 @@ _KLID_RE = re.compile(r"^[0-9a-f]{8}$")
 # — это битовая маска feature-флагов, а не KLID; до этой правки сканер
 # ошибочно показывал "Layout (000006ff)". Имена значений реестра не
 # чувствительны к регистру — сравниваем в lowercase.
-_METADATA_VALUE_NAMES = frozenset({
-    "featurestoinstall",   # битовая маска флагов (напр. "000006ff")
-    "cachedlanguagename",  # отображаемое имя языка
-    "showcasing",          # опции отображения (Languages)
-    "windowsoverride",     # переопределение языка интерфейса (тег, не раскладка)
-})
+_METADATA_VALUE_NAMES = frozenset(
+    {
+        "featurestoinstall",  # битовая маска флагов (напр. "000006ff")
+        "cachedlanguagename",  # отображаемое имя языка
+        "showcasing",  # опции отображения (Languages)
+        "windowsoverride",  # переопределение языка интерфейса (тег, не раскладка)
+    }
+)
 
 
 def _parse_language_entries(stdout: str) -> list[dict[str, Any]]:
@@ -657,7 +660,7 @@ def _get_language_list_from_powershell() -> list[dict[str, Any]]:
             ],
             capture_output=True,
             text=True,
-            timeout=20,
+            timeout=TIMEOUTS["powershell_list"],
         )
         if result.returncode != 0:
             stderr = (result.stderr or "").strip()

@@ -13,9 +13,12 @@ import datetime
 import json
 import logging
 import os
+import platform
 import re
 import subprocess
+import sys
 import tempfile
+import uuid
 import winreg
 from pathlib import Path
 from typing import Any
@@ -23,7 +26,14 @@ from typing import Any
 import applog
 import scanner
 from applog import get_app_dir
-from config import _SANDBOX_ROOT, disable_sandbox, enable_sandbox, is_sandbox_enabled
+from config import (
+    _SANDBOX_ROOT,
+    TIMEOUTS,
+    __version__,
+    disable_sandbox,
+    enable_sandbox,
+    is_sandbox_enabled,
+)
 from scanner import _METADATA_VALUE_NAMES, LAYOUT_MAP, _get_preload_keys
 from winproc import run_hidden
 
@@ -82,6 +92,74 @@ class BackupError(RuntimeError):
     """
 
 
+def _system_info() -> dict[str, str]:
+    """
+    Контекст системы для отчёта об операции (диагностика удалённых сбоев).
+
+    Returns
+    -------
+    dict[str, str]
+        ``{"windows_version", "python_version", "app_version"}``
+    """
+    return {
+        "windows_version": platform.version(),
+        "python_version": sys.version.split()[0],
+        "app_version": __version__,
+    }
+
+
+# Санити-границы размера .reg-бэкапа перед импортом (restore_registry_backup
+# и _check_reg_backup_file — единый источник значений, чтобы проверки не
+# разошлись). Нижняя граница — заголовок «Windows Registry Editor Version
+# 5.00» плюс хотя бы одна секция ключа; верхняя — с запасом к реальным
+# бэкапам (типичный размер 10-500 КБ, полный CTF-профиль — единицы МБ).
+REG_BACKUP_MIN_BYTES = 100
+REG_BACKUP_MAX_BYTES = 50 * 1024 * 1024
+
+
+def _check_reg_backup_file(path: Path) -> str:
+    """
+    Проверить .reg-бэкап перед импортом: существование, размер, BOM/заголовок.
+
+    Импорт повреждённого или постороннего файла — операция, которая меняет
+    реестр пользователя; поэтому проверяется не только наличие файла, но и
+    его размер и первая строка (настоящий .reg всегда начинается с
+    ``Windows Registry Editor Version 5.00``, файл regedit — UTF-16 LE).
+
+    Returns
+    -------
+    str
+        Пустая строка — файл корректен. Иначе — текст причины отказа
+        (человеко-читаемый, для UI/лога).
+    """
+    try:
+        size = path.stat().st_size
+    except OSError as exc:
+        return f"не удалось прочитать файл бэкапа: {path} ({exc})"
+
+    if size < REG_BACKUP_MIN_BYTES:
+        return (
+            f"файл бэкапа повреждён: размер {size} байт, ожидается минимум "
+            f"{REG_BACKUP_MIN_BYTES} (заголовок .reg и хотя бы один ключ)"
+        )
+    if size > REG_BACKUP_MAX_BYTES:
+        return (
+            f"файл бэкапа слишком велик: {size} байт, ожидается не более "
+            f"{REG_BACKUP_MAX_BYTES} — вероятна ошибка экспорта"
+        )
+
+    try:
+        head = path.read_text(encoding="utf-16")[:120]
+    except (UnicodeError, OSError) as exc:
+        return f"файл бэкапа не читается как .reg (UTF-16 LE): {exc}"
+    if "Windows Registry Editor Version" not in head:
+        return (
+            "файл бэкапа не похож на .reg (нет заголовка "
+            "'Windows Registry Editor Version 5.00')"
+        )
+    return ""
+
+
 # Корни реестра по имени (элементы scanner.AFFECTED_BRANCHES)
 _ROOT_CONST: dict[str, int] = {
     "HKCU": winreg.HKEY_CURRENT_USER,
@@ -107,6 +185,9 @@ _RECURSIVE_SUBKEYS = {
 # Максимальная глубина рекурсивной очистки (защита от аномальных деревьев).
 # 6 хватает до SortOrder\AssemblyItem\<LANGID>\{GUID}\00000000 (глубина 5)
 _MAX_CLEAN_DEPTH = 6
+
+# Санити-границы размера .reg-бэкапа объявлены рядом с _check_reg_backup_file
+# (REG_BACKUP_MIN_BYTES / REG_BACKUP_MAX_BYTES) — единый источник значений.
 
 
 # ---------------------------------------------------------------------------
@@ -264,7 +345,7 @@ def _export_single_key_via_reg(
         result = run_hidden(
             ["reg", "export", full_path, out_path, "/y"],
             capture_output=True,
-            timeout=15,
+            timeout=TIMEOUTS["reg_export"],
         )
         if result.returncode != 0:
             stderr_tail = (
@@ -326,7 +407,24 @@ def backup_registry(
     # Портативный режим: по умолчанию бэкапы кладём рядом с приложением
     # (в собранном .exe — папка с exe, например флешка), а не в cwd.
     backup_dir_path = Path(backup_dir) if backup_dir else get_app_dir() / "backups"
-    backup_dir_path.mkdir(parents=True, exist_ok=True)
+    try:
+        backup_dir_path.mkdir(parents=True, exist_ok=True)
+        # Тестовая запись: каталог может существовать, но быть недоступным
+        # для записи (Program Files, сетевой диск, read-only носитель) —
+        # падать позже, на записи .reg, значит терять понятную диагностику.
+        probe = backup_dir_path / ".klc_write_test"
+        probe.write_text("probe", encoding="utf-8")
+        probe.unlink(missing_ok=True)
+    except PermissionError as exc:
+        raise BackupError(
+            f"нет прав на запись в папку бэкапов: {backup_dir_path}. "
+            "Выберите другую папку или запустите приложение от имени "
+            "администратора."
+        ) from exc
+    except OSError as exc:
+        raise BackupError(
+            f"не удалось подготовить папку бэкапов {backup_dir_path}: {exc}"
+        ) from exc
 
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     backup_file = backup_dir_path / f"keyboard_layout_backup_{timestamp}.reg"
@@ -692,9 +790,7 @@ def _walk_branch_recursive(
                     try:
                         winreg.DeleteValue(key, name)
                     except OSError as exc:
-                        logger.warning(
-                            "Не удалено %s / %s: %s", key_path, name, exc
-                        )
+                        logger.warning("Не удалено %s / %s: %s", key_path, name, exc)
                         continue
                 rel = key_path[len(subkey_path) :].lstrip("\\")
                 deleted.append(f"{rel}\\{name}" if rel else name)
@@ -1105,7 +1201,7 @@ def _run_cleanup_script(
                 ],
                 capture_output=True,
                 text=True,
-                timeout=45,
+                timeout=TIMEOUTS["powershell_cleanup"],
             )
         else:
             result = run_hidden(
@@ -1121,12 +1217,16 @@ def _run_cleanup_script(
                 ],
                 capture_output=True,
                 text=True,
-                timeout=45,
+                timeout=TIMEOUTS["powershell_cleanup"],
             )
     except FileNotFoundError:
         return False, "powershell не найден", dict(empty)
     except subprocess.TimeoutExpired:
-        return False, "превышен таймаут PowerShell (45 с)", dict(empty)
+        return (
+            False,
+            f"превышен таймаут PowerShell ({TIMEOUTS['powershell_cleanup']} с)",
+            dict(empty),
+        )
     except OSError as exc:
         return False, f"ошибка запуска PowerShell: {exc}", dict(empty)
 
@@ -1192,7 +1292,7 @@ def _sync_language_list_via_powershell(
             ],
             capture_output=True,
             text=True,
-            timeout=45,
+            timeout=TIMEOUTS["powershell_cleanup"],
         )
     except (FileNotFoundError, subprocess.TimeoutExpired, OSError) as exc:
         return False, f"ошибка запуска PowerShell: {exc}"
@@ -1225,7 +1325,7 @@ def _stop_ctfmon() -> bool:
             ],
             capture_output=True,
             text=True,
-            timeout=20,
+            timeout=TIMEOUTS["ctfmon_control"],
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         logger.warning("Остановка ctfmon не удалась: %s", exc)
@@ -1255,7 +1355,7 @@ def _start_ctfmon() -> bool:
             ],
             capture_output=True,
             text=True,
-            timeout=20,
+            timeout=TIMEOUTS["ctfmon_control"],
         )
         ok = result.returncode == 0
     except (OSError, subprocess.TimeoutExpired) as exc:
@@ -1322,7 +1422,7 @@ def _backup_language_list(backup_file: Path) -> str:
             ],
             capture_output=True,
             text=True,
-            timeout=45,
+            timeout=TIMEOUTS["powershell_backup"],
         )
     except (subprocess.TimeoutExpired, OSError) as exc:
         logger.warning("Не удалось экспортировать список языков: %s", exc)
@@ -1364,20 +1464,36 @@ def restore_language_list(json_path: str | Path) -> bool:
         return False
     if isinstance(data, dict):
         data = [data]
+    if not isinstance(data, list):
+        logger.warning(
+            "JSON-бэкап %s должен содержать массив языков, получено %s",
+            path,
+            type(data).__name__,
+        )
+        return False
     entries: list[tuple[str, list[str]]] = []
     for item in data:
+        if not isinstance(item, dict):
+            logger.warning("Некорректный элемент JSON-бэкапа %s", path)
+            return False
         raw_tag = item.get("LanguageTag", "")
         # PowerShell может вернуть LanguageTag массивом (["ru", "en-US"]),
         # тогда берём первое непустое значение.
         if isinstance(raw_tag, (list, tuple)):
             raw_tag = next((t for t in raw_tag if str(t).strip()), "")
-        tag = str(raw_tag).strip()
-        if not tag:
-            continue
+        if not isinstance(raw_tag, str) or not raw_tag.strip():
+            logger.warning("Отсутствует корректный LanguageTag в %s", path)
+            return False
+        tag = raw_tag.strip()
         raw_tips = item.get("InputMethodTips") or []
         # Единичная раскладка может прийти строкой или числом, а не списком.
         if isinstance(raw_tips, (str, int)):
             raw_tips = [raw_tips]
+        if not isinstance(raw_tips, list) or any(
+            not isinstance(t, (str, int)) or isinstance(t, bool) for t in raw_tips
+        ):
+            logger.warning("Некорректный InputMethodTips в %s", path)
+            return False
         tips = [str(t) for t in raw_tips]
         entries.append((tag, tips))
     if not entries:
@@ -1407,7 +1523,7 @@ def restore_language_list(json_path: str | Path) -> bool:
             ],
             capture_output=True,
             text=True,
-            timeout=45,
+            timeout=TIMEOUTS["powershell_cleanup"],
         )
     except (subprocess.TimeoutExpired, OSError) as exc:
         logger.warning("Восстановление списка языков не удалось: %s", exc)
@@ -1560,7 +1676,7 @@ def sync_welcome_screen_settings() -> bool:
             ],
             capture_output=True,
             text=True,
-            timeout=45,  # Увеличено с 15 до 45 сек — на слабом железе операция может занимать до 30 сек
+            timeout=TIMEOUTS["powershell_welcome_sync"],
         )
         ok = res.returncode == 0
         if ok:
@@ -1672,6 +1788,14 @@ def restore_registry_backup(reg_path: str | Path) -> dict[str, Any]:
             "needs_admin": False,
         }
 
+    if bad := _check_reg_backup_file(path):
+        return {
+            "ok": False,
+            "detail": bad,
+            "elevated": False,
+            "needs_admin": False,
+        }
+
     needs_admin = False
     try:
         text = path.read_text(encoding="utf-16")
@@ -1698,7 +1822,7 @@ def restore_registry_backup(reg_path: str | Path) -> dict[str, Any]:
                 ],
                 capture_output=True,
                 text=True,
-                timeout=180,
+                timeout=TIMEOUTS["reg_import_uac"],
             )
         except (subprocess.TimeoutExpired, OSError) as exc:
             return {
@@ -1726,7 +1850,7 @@ def restore_registry_backup(reg_path: str | Path) -> dict[str, Any]:
             ["reg", "import", str(path)],
             capture_output=True,
             text=False,
-            timeout=60,
+            timeout=TIMEOUTS["reg_import"],
         )
     except (subprocess.TimeoutExpired, OSError) as exc:
         return {
@@ -1875,7 +1999,25 @@ def delete_layout(layout_id: str) -> dict[str, Any]:
                 "language_sync_block_detail": str,
                 "welcome_screen_synced": bool,
                 "welcome_screen_sync_detail": str,
+                "operation_id": str,      # короткий id операции (для логов)
+                "started_at": str,        # ISO-время старта
+                "completed_at": str,      # ISO-время завершения ("" — прервано)
+                "system_info": dict,      # windows/python/app версии
+                "error": str,             # текст исключения ("" — без ошибок)
             }
+
+    Защита «последняя раскладка» проверяется ПОСЛЕ остановки службы ввода
+    (внутри :class:`CtfmonSuspender`), а не до бэкапа: ранняя проверка
+    оставляла окно гонки с живым TSF-кешем.
+
+    Автоматический откат частично удалённых значений СОЗНАТЕЛЬНО не
+    выполняется: перед удалением всегда создаётся .reg-бэкап, а сама
+    очистка идемпотентна (``_wipe_branches`` вызывается дважды), поэтому
+    откат при исключении не даёт выигрыша, но создаёт риск записать в
+    реестр устаревший снимок. Вместо отката исключение на середине
+    операции перехватывается: отчёт возвращается с ``success=False``,
+    текстом в ``error`` и путями бэкапов — восстановление выполняет явная
+    операция :func:`restore_backup` по ``backup_path``.
     """
     layout_id = layout_id.strip().lower()
     if not re.fullmatch(r"[0-9a-f]{8}", layout_id):
@@ -1887,6 +2029,11 @@ def delete_layout(layout_id: str) -> dict[str, Any]:
     result: dict[str, Any] = {
         "success": False,
         "klid": layout_id,
+        "operation_id": uuid.uuid4().hex[:8],
+        "started_at": datetime.datetime.now().isoformat(timespec="seconds"),
+        "completed_at": "",
+        "system_info": _system_info(),
+        "error": "",
         "backup_path": "",
         "backup_ok": True,
         "backup_error": "",
@@ -1913,13 +2060,12 @@ def delete_layout(layout_id: str) -> dict[str, Any]:
     }
 
     # ------------------------------------------------------------------
-    # Защита: не даём удалить ПОСЛЕДНЮЮ оставшуюся раскладку системы,
-    # иначе Windows останется без раскладки клавиатуры вообще
+    # Ранний отказ без бэкапа и остановки ввода. Проверяем повторно перед
+    # записью: другую раскладку могли удалить, пока создавался бэкап.
     # ------------------------------------------------------------------
-    current_klids = _current_preload_klids(result["admin_privileges"])
-    if current_klids == {layout_id}:
+    if _current_preload_klids(result["admin_privileges"]) == {layout_id}:
         result["last_layout_guard"] = True
-        logger.warning("Удаление отклонено: это последняя оставшаяся раскладка")
+        result["completed_at"] = datetime.datetime.now().isoformat(timespec="seconds")
         return result
 
     # ------------------------------------------------------------------
@@ -1963,39 +2109,76 @@ def delete_layout(layout_id: str) -> dict[str, Any]:
     # ------------------------------------------------------------------
     ctfmon_started: bool | None = None
     retry_total = 0
+    total_deleted = 0
     ok, detail = False, "SKIPPED"
 
     with CtfmonSuspender() as suspender:
-        # Шаг 3: Очистка веток реестра (идемпотентная — можно повторять)
-        total_deleted = _wipe_branches(branches_now, result, layout_id)
-
-        # Шаг 4: Синхронизация списка языков через PowerShell
-        ok, detail = _sync_language_list_via_powershell(layout_id)
-        result["power_sync"] = ok
-        result["power_sync_detail"] = detail
-
-        # Шаг 4a: Блокировка облачной синхронизации языков
-        sync_blocked, sync_block_detail = disable_language_sync()
-        result["language_sync_blocked"] = sync_blocked
-        result["language_sync_block_detail"] = sync_block_detail
-
-        # Шаг 4b: Синхронизация чистых настроек с Экраном приветствия
-        # Требует прав администратора (Copy-UserInternationalSettingsToSystem)
-        if result["admin_privileges"]:
-            welcome_synced = sync_welcome_screen_settings()
-            result["welcome_screen_synced"] = welcome_synced
-            result["welcome_screen_sync_detail"] = (
-                "Обновлено" if welcome_synced else "Не удалось обновить — см. лог"
+        # Повторная проверка сокращает окно гонки, но не устраняет его:
+        # остановка ctfmon не блокирует записи из системных Параметров.
+        current_klids = _current_preload_klids(result["admin_privileges"])
+        if current_klids == {layout_id}:
+            result["last_layout_guard"] = True
+            result["completed_at"] = datetime.datetime.now().isoformat(
+                timespec="seconds"
             )
-        else:
-            result["welcome_screen_synced"] = False
-            result["welcome_screen_sync_detail"] = (
-                "Пропущено (требуются права администратора)"
+            logger.warning(
+                "Удаление отклонено (проверка после остановки службы ввода): "
+                "это последняя оставшаяся раскладка"
             )
+            # return внутри with: __exit__ запустит ctfmon обратно.
+            return result
 
-        # Шаг 5: Верификация — повторная подчистка того, что служба могла
-        # вернуть между шагами 3 и 4.
-        retry_total = _wipe_branches(branches_now, result, layout_id)
+        # Шаг 3a..5 выполняются под try/except: если что-то падает на середине,
+        # пользователь ДОЛЖЕН получить отчёт с путями к бэкапу, а не только
+        # трассировку в логе. Откат значений здесь сознательно не делается
+        # (см. докстринг delete_layout): очистка идемпотентна, а .reg-бэкап
+        # уже создан — восстановление выполняет restore_backup.
+        try:
+            # Шаг 3a: Очистка веток реестра (идемпотентная — можно повторять)
+            total_deleted = _wipe_branches(branches_now, result, layout_id)
+
+            # Шаг 4: Синхронизация списка языков через PowerShell
+            ok, detail = _sync_language_list_via_powershell(layout_id)
+            result["power_sync"] = ok
+            result["power_sync_detail"] = detail
+
+            # Шаг 4a: Блокировка облачной синхронизации языков
+            sync_blocked, sync_block_detail = disable_language_sync()
+            result["language_sync_blocked"] = sync_blocked
+            result["language_sync_block_detail"] = sync_block_detail
+
+            # Шаг 4b: Синхронизация чистых настроек с Экраном приветствия
+            # Требует прав администратора (Copy-UserInternationalSettingsToSystem)
+            if result["admin_privileges"]:
+                welcome_synced = sync_welcome_screen_settings()
+                result["welcome_screen_synced"] = welcome_synced
+                result["welcome_screen_sync_detail"] = (
+                    "Обновлено" if welcome_synced else "Не удалось обновить — см. лог"
+                )
+            else:
+                result["welcome_screen_synced"] = False
+                result["welcome_screen_sync_detail"] = (
+                    "Пропущено (требуются права администратора)"
+                )
+
+            # Шаг 5: Верификация — повторная подчистка того, что служба могла
+            # вернуть между шагами 3 и 4.
+            retry_total = _wipe_branches(branches_now, result, layout_id)
+        except Exception as exc:
+            # Осознанно широкий except: сбой любой подсистемы (winreg, reg.exe,
+            # PowerShell, кодеки) на середине операции не должен превращаться в
+            # «немой» краш фонового потока. Отчёт с бэкапом и текстом ошибки
+            # информативнее трассировки: пользователь сможет откатиться.
+            result["success"] = False
+            result["error"] = f"{type(exc).__name__}: {exc}"
+            result["completed_at"] = datetime.datetime.now().isoformat(
+                timespec="seconds"
+            )
+            logger.exception(
+                "Удаление прервано исключением (частичные изменения возможны, "
+                "бэкап: %s)",
+                result["backup_path"],
+            )
 
     # Результат запуска ctfmon фиксируется в __exit__ контекстного менеджера
     # (CtfmonSuspender) — служба уже запущена там, повторный вызов не нужен.
@@ -2013,7 +2196,10 @@ def delete_layout(layout_id: str) -> dict[str, Any]:
         result["ctfmon_restarted"] = ctfmon_started
 
     # Успех = что-то удалено в реестре ИЛИ список языков реально очищен
-    result["success"] = total_deleted > 0 or (ok and detail == "SUCCESS")
+    result["success"] = not result["error"] and (
+        total_deleted > 0 or (ok and detail == "SUCCESS")
+    )
+    result["completed_at"] = datetime.datetime.now().isoformat(timespec="seconds")
 
     return result
 
@@ -2124,7 +2310,9 @@ if __name__ == "__main__":
     parser.add_argument(
         "--plan", action="store_true", help="dry-run: показать план без изменений"
     )
-    parser.add_argument("--sandbox", action="store_true", help="работать в sandbox-режиме")
+    parser.add_argument(
+        "--sandbox", action="store_true", help="работать в sandbox-режиме"
+    )
     parser.add_argument("--json", action="store_true", help="вывести отчёт в JSON")
     args = parser.parse_args()
 

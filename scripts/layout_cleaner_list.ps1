@@ -7,6 +7,12 @@
 
 $ErrorActionPreference = 'Stop'
 
+# Вывод в UTF-8: Python (winproc.run_hidden) читает дочерний вывод как UTF-8.
+# Без этого кириллица в stdout/stderr декодируется системной кодовой страницей
+# и превращается в мусор. try/catch — на PowerShell 5.1 без консоли сеттер
+# [Console]::OutputEncoding может бросить IOException.
+try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch { }
+
 $langs = Get-WinUserLanguageList
 foreach ($l in $langs) {
     $tips = @($l.InputMethodTips) -join ';'

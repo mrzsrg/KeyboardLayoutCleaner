@@ -66,9 +66,7 @@ class FakeWinreg:
     @classmethod
     def _join(cls, base_path, sub):
         sub = cls._norm(sub)
-        return (
-            base_path if not sub else (base_path + "\\" + sub if base_path else sub)
-        )
+        return base_path if not sub else (base_path + "\\" + sub if base_path else sub)
 
     def _infer_type(self, val):
         if isinstance(val, (list, tuple)):

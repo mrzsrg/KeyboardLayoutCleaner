@@ -107,12 +107,8 @@ def _mock_dependencies(monkeypatch):
     monkeypatch.setattr(ctypes, "wintypes", types.SimpleNamespace())
     import winreg as _wr
 
-    monkeypatch.setattr(
-        _wr, "OpenKeyEx", mock.MagicMock(return_value=mock.MagicMock())
-    )
-    monkeypatch.setattr(
-        _wr, "EnumValue", mock.MagicMock(side_effect=FileNotFoundError)
-    )
+    monkeypatch.setattr(_wr, "OpenKeyEx", mock.MagicMock(return_value=mock.MagicMock()))
+    monkeypatch.setattr(_wr, "EnumValue", mock.MagicMock(side_effect=FileNotFoundError))
     ctk = _make_ctk()
     monkeypatch.setitem(sys.modules, "customtkinter", ctk)
 

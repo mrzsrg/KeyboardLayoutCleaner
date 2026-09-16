@@ -28,6 +28,25 @@ except (ImportError, PackageNotFoundError):
     __version__ = "1.0.3"
 
 # ---------------------------------------------------------------------------
+# Таймауты внешних процессов (секунды)
+#
+# Единая точка настройки: значения используются в cleaner.py, scanner.py и
+# mutex.py через указанные ключи, ЛИТЕРАЛЫ timeout=<число> в этих модулях
+# запрещены (регрессионный тест test_no_hardcoded_timeouts).
+# ---------------------------------------------------------------------------
+TIMEOUTS: dict[str, int] = {
+    "reg_export": 15,  # reg export одной ветки реестра
+    "reg_import": 60,  # reg import без UAC
+    "reg_import_uac": 180,  # reg import с UAC (пользователь читает запрос)
+    "powershell_list": 20,  # layout_cleaner_list.ps1 (скан языков)
+    "powershell_backup": 45,  # layout_cleaner_backup.ps1 (снимок языков)
+    "powershell_cleanup": 45,  # cleanup/sync/restore списка языков
+    "powershell_welcome_sync": 45,  # Copy-UserInternationalSettingsToSystem
+    "ctfmon_control": 20,  # остановка/запуск ctfmon
+    "mutex_wait": 60,  # ожидание освобождения мьютекса при elevate
+}
+
+# ---------------------------------------------------------------------------
 # Sandbox-константы
 # ---------------------------------------------------------------------------
 _SANDBOX_ROOT = "Software\\KeyboardCleanerTest"

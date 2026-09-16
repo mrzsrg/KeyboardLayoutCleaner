@@ -48,6 +48,7 @@ class _MultiPatch:
             p.stop()
         return False
 
+
 def _install_fake_winreg(fake):
     """Патчим winreg в scanner и cleaner единым FakeWinreg-объектом."""
     return _MultiPatch(
@@ -565,9 +566,7 @@ class TestSourceCoverageInvariants:
             ),
             ("HKU", ".DEFAULT\\Keyboard Layout\\Preload"),
         }
-        actual = {
-            (root, subkey) for root, subkey, _mode, _admin in self.REAL_BRANCHES
-        }
+        actual = {(root, subkey) for root, subkey, _mode, _admin in self.REAL_BRANCHES}
         assert actual == expected
 
     def test_only_hku_default_requires_admin(self):
@@ -591,11 +590,7 @@ class TestSourceCoverageInvariants:
 
     def test_recursive_subkeys_subset_of_hkcu_branches(self):
         """Рекурсивная очистка — только внутри HKCU-веток матрицы."""
-        hkcu = {
-            subkey
-            for root, subkey, _m, _a in self.REAL_BRANCHES
-            if root == "HKCU"
-        }
+        hkcu = {subkey for root, subkey, _m, _a in self.REAL_BRANCHES if root == "HKCU"}
         assert hkcu >= cleaner._RECURSIVE_SUBKEYS
 
     def test_dynamic_lists_restored_after_sandbox(self):
@@ -1076,7 +1071,6 @@ class TestLanguageSync:
         assert ok
         assert "уже" in detail.lower()
 
-
     def test_sandbox_scan_excludes_powershell_source(self, fake_winreg):
         """В sandbox PowerShell-источник исключён — изоляция полная.
 
@@ -1105,8 +1099,8 @@ class TestReviewHardening:
             "Keyboard Layout\\Preload",
             values={
                 "1": "00000409",
-                "2": "ru-RU",      # не KLID
-                "3": "1",          # не KLID
+                "2": "ru-RU",  # не KLID
+                "3": "1",  # не KLID
                 "4": "00000809",
             },
         )
@@ -1123,9 +1117,9 @@ class TestReviewHardening:
             "Keyboard Layout\\Substitutes",
             values={
                 "00000419": "00000409",
-                "1": "00000409",       # source не KLID
-                "D0090409": "junk",    # target не KLID
-                "RU-RU": "00000409",   # source не KLID
+                "1": "00000409",  # source не KLID
+                "D0090409": "junk",  # target не KLID
+                "RU-RU": "00000409",  # source не KLID
             },
         )
         with _install_fake_winreg(fake_winreg):
@@ -1163,8 +1157,8 @@ class TestReviewHardening:
         assert cleaner.restore_language_list(jp) is True
 
         cmd = captured["cmd"]
-        assert isinstance(cmd, list)          # не строка → shell-инъекция невозможна
-        assert cmd[-2] == "-JsonPath"         # путь — отдельный аргумент
+        assert isinstance(cmd, list)  # не строка → shell-инъекция невозможна
+        assert cmd[-2] == "-JsonPath"  # путь — отдельный аргумент
         assert "Отчёты_и_Настройки" in cmd[-1]  # кириллица не искажена
         assert cmd[-1].endswith(".json")
 

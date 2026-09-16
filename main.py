@@ -59,12 +59,13 @@ except (ImportError, AttributeError, OSError):
 # ---------------------------------------------------------------------------
 # Импорт из центрального модуля конфигурации
 # ---------------------------------------------------------------------------
-from config import (  # noqa: E402
-    __version__ as app_version,
-)
 from config import (  # noqa: E402 — импорты ниже _parse_sandbox_mode намеренны (см. блок на стр. 221)
+    TIMEOUTS,
     disable_sandbox,
     enable_sandbox,
+)
+from config import (  # noqa: E402
+    __version__ as app_version,
 )
 
 # ---------------------------------------------------------------------------
@@ -150,7 +151,9 @@ if sys.platform != "win32":
 # ---------------------------------------------------------------------------
 # Защита от параллельных запусков (named mutex)
 # ---------------------------------------------------------------------------
+from mutex import ERROR_CANCELLED as _MUTEX_CANCELLED  # noqa: E402
 from mutex import acquire_mutex as _mutex_acquire  # noqa: E402
+from mutex import confirm_wait_dialog as _mutex_confirm_wait  # noqa: E402
 from mutex import release_mutex as _mutex_release  # noqa: E402
 
 # Алиасы для обратной совместимости с тестами
@@ -158,8 +161,17 @@ _MUTEX_NAME = r"Global\KeyboardLayoutCleaner_{A3F8B2C1-7D4E-4A9B-8C6F-1E2D3F4A5B
 
 
 def _acquire_mutex(is_elevate: bool = False):
-    """Обёртка над acquire_mutex с передачей флага elevate."""
-    return _mutex_acquire(_MUTEX_NAME, is_elevate=is_elevate)
+    """
+    Обёртка над acquire_mutex с передачей флага elevate.
+
+    ``confirm_wait`` подключает диалог «ждать до N сек?» — он показывается
+    ТОЛЬКО если мьютекс занят дольше grace-периода, т.е. в сценарии elevate,
+    когда предыдущий экземпляр не завершился. Иначе пользователь ждал бы
+    освобождения молча (или зависший процесс держал бы запуск 60 секунд).
+    """
+    return _mutex_acquire(
+        _MUTEX_NAME, is_elevate=is_elevate, confirm_wait=_mutex_confirm_wait
+    )
 
 
 # NOTE: Мьютекс НЕ захватывается на уровне модуля — это мешает тестам.
@@ -1424,7 +1436,6 @@ class KeyboardLayoutCleaner(ctk.CTk):
             + len(report.get("ctf_profiles_deleted", []))
         )
 
-        power_sync = report.get("power_sync", False)
         sync_detail = report.get("power_sync_detail", "")
 
         # Защита последней раскладки: отчёт раньше остального текста
@@ -1450,72 +1461,18 @@ class KeyboardLayoutCleaner(ctk.CTk):
 
         # Сообщение о результате
         if report.get("success"):
-            msg = (
-                _t("dlg_result_done")
-                + "\n\n"
-                + _t("dlg_result_deleted", count=total_deleted)
-                + "\n"
-                + _t("dlg_result_sync_prefix")
-                + ("✓ " + sync_detail if power_sync else "✗ " + sync_detail)
-            )
-
-            # Индикатор блокировки облачной синхронизации
-            sync_blocked = report.get("language_sync_blocked", False)
-            sync_block_detail = report.get("language_sync_block_detail", "")
-            msg += (
-                "\n"
-                + _t("dlg_result_cloud_sync")
-                + (
-                    "✓ " + sync_block_detail
-                    if sync_blocked
-                    else "✗ " + sync_block_detail
-                )
-            )
-
-            # Индикатор синхронизации Экрана приветствия
-            welcome_synced = report.get("welcome_screen_synced", False)
-            welcome_detail = report.get("welcome_screen_sync_detail", "")
-            msg += (
-                "\n"
-                + _t("dlg_result_welcome_sync")
-                + ("✓ " + welcome_detail if welcome_synced else "✗ " + welcome_detail)
-            )
-
-            partial = report.get("backup_failed_branches", [])
-            if partial:
-                msg += "\n" + _t(
-                    "dlg_result_backup_partial", branches=", ".join(partial)
-                )
-            if power_sync:
-                msg += _t("dlg_advice_logoff")
-            else:
-                msg += _t("dlg_advice_ps_failed")
-            retry = report.get("retry_cleaned", 0)
-            if retry:
-                msg += _t("dlg_advice_ctfmon", count=retry)
-            profiles = len(report.get("ctf_profiles_deleted", []))
-            if profiles:
-                msg += "\n" + _t("dlg_result_ctf_profiles", count=profiles)
-            ctfmon = report.get("ctfmon_restarted")
-            if ctfmon is True:
-                msg += "\n" + _t("dlg_result_ctfmon_ok")
-            elif ctfmon is False:
-                msg += "\n" + _t("dlg_result_ctfmon_fail")
-            msg += "\n\n" + _t("dlg_advice_restore")
+            msg = self._build_success_message(report, total_deleted)
             self._set_status(_t("status_deleted_count", count=total_deleted))
             logger.info(
                 "Удаление %s: записей=%d, sync=%s, cloud_block=%s, welcome=%s",
                 report.get("klid", "?"),
                 total_deleted,
-                sync_detail,
-                sync_block_detail,
-                welcome_detail,
+                report.get("power_sync_detail", ""),
+                report.get("language_sync_block_detail", ""),
+                report.get("welcome_screen_sync_detail", ""),
             )
         else:
-            msg = _t(
-                "dlg_delete_failed_nosync",
-                detail=sync_detail or "нет данных",
-            )
+            msg = self._build_failure_message(report, sync_detail)
             self._set_status(_t("status_delete_failed"))
             logger.warning("Удаление не удалось: %s", report)
 
@@ -1532,6 +1489,64 @@ class KeyboardLayoutCleaner(ctk.CTk):
 
         # Обновляем данные — пересканируем в фоновом потоке
         self._refresh_after_delete()
+
+    def _build_success_message(self, report: dict[str, Any], total_deleted: int) -> str:
+        """Собрать детальное сообщение об удачном удалении для диалога результата."""
+        sync_detail = report.get("power_sync_detail", "")
+        # Переменные sync_block_* / welcome_* также используются в _after_delete"""
+        # Переменные sync_block_* / welcome_* также используются в _after_delete
+        # для логирования — здесь переопределяем локально только для сообщения.
+        sync_blocked = report.get("language_sync_blocked", False)
+        sync_block_detail = report.get("language_sync_block_detail", "")
+        welcome_synced = report.get("welcome_screen_synced", False)
+        welcome_detail = report.get("welcome_screen_sync_detail", "")
+
+        msg = (
+            _t("dlg_result_done")
+            + "\n\n"
+            + _t("dlg_result_deleted", count=total_deleted)
+            + "\n"
+            + _t("dlg_result_sync_prefix")
+            + ("✓ " + sync_detail if report["power_sync"] else "✗ " + sync_detail)
+        )
+        msg += (
+            "\n"
+            + _t("dlg_result_cloud_sync")
+            + ("✓ " + sync_block_detail if sync_blocked else "✗ " + sync_block_detail)
+        )
+        msg += (
+            "\n"
+            + _t("dlg_result_welcome_sync")
+            + ("✓ " + welcome_detail if welcome_synced else "✗ " + welcome_detail)
+        )
+
+        partial = report.get("backup_failed_branches", [])
+        if partial:
+            msg += "\n" + _t("dlg_result_backup_partial", branches=", ".join(partial))
+        if report["power_sync"]:
+            msg += _t("dlg_advice_logoff")
+        else:
+            msg += _t("dlg_advice_ps_failed")
+        retry = report.get("retry_cleaned", 0)
+        if retry:
+            msg += _t("dlg_advice_ctfmon", count=retry)
+        profiles = len(report.get("ctf_profiles_deleted", []))
+        if profiles:
+            msg += "\n" + _t("dlg_result_ctf_profiles", count=profiles)
+        ctfmon = report.get("ctfmon_restarted")
+        if ctfmon is True:
+            msg += "\n" + _t("dlg_result_ctfmon_ok")
+        elif ctfmon is False:
+            msg += "\n" + _t("dlg_result_ctfmon_fail")
+        msg += "\n\n" + _t("dlg_advice_restore")
+        return msg
+
+    def _build_failure_message(self, report: dict[str, Any], sync_detail: str) -> str:
+        """Собрать сообщение о неудаче удаления для диалога результата."""
+        msg = _t("dlg_delete_failed_nosync", detail=sync_detail or "нет данных")
+        if report.get("error"):
+            msg += "\n\n" + _t("dlg_delete_failed", error=report["error"])
+        return msg
 
     def _after_delete_error(self, error_msg: str) -> None:
         """Обработка ошибки удаления."""
@@ -2001,9 +2016,19 @@ def main() -> None:
     mutex_handle, last_error = _acquire_mutex(is_elevate=args.elevate)
     logger.info("Итог: handle=%s, error=%d", mutex_handle, last_error)
 
+    if last_error == _MUTEX_CANCELLED:
+        # Пользователь отказался ждать освобождения мьютекса (диалог
+        # confirm_wait) — это осознанный выбор, а не сбой: выходим без ошибки.
+        logger.info("Пользователь отменил ожидание освобождения мьютекса")
+        if sys.stderr:
+            sys.stderr.write("Запуск отменён пользователем.\n")
+        sys.exit(0)
+
     if last_error == 183:
         # Старый процесс так и не освободил mutex за отведённое время.
-        logger.error("Не удалось захватить мьютекс за 60 секунд")
+        logger.error(
+            "Не удалось захватить мьютекс за %d секунд", TIMEOUTS["mutex_wait"]
+        )
         if sys.stderr:
             sys.stderr.write(
                 "Ошибка: приложение уже запущено.\n"
@@ -2033,8 +2058,7 @@ def main() -> None:
                 from tkinter import messagebox
 
                 messagebox.showerror(
-                    "Ошибка",
-                    f"Не удалось создать mutex (GetLastError={last_error})."
+                    "Ошибка", f"Не удалось создать mutex (GetLastError={last_error})."
                 )
             except Exception:
                 logger.exception("Не удалось показать messagebox о создании mutex")

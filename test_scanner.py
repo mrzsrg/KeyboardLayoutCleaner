@@ -339,6 +339,31 @@ class TestScanBranchRecursive:
         assert "000006ff" not in klids
         assert "00000809" in klids
 
+    def test_features_to_install_dword_not_klid(self, fake_winreg):
+        """Реальный тип значения: FeaturesToInstall = REG_DWORD 0x6ff.
+
+        В живом реестре значение хранится как DWORD-битовая маска (0x6ff),
+        а не строка: строка «000006ff» возникает только при рендеринге int
+        в нормализаторе сканера (f"{cand:08x}"). Фильтр метаданных обязан
+        срабатывать по имени значения независимо от его типа.
+        """
+        fake_winreg.set(
+            fake_winreg.HKEY_CURRENT_USER,
+            "T4b\\en-US",
+            values={
+                "FeaturesToInstall": 0x6FF,  # int -> REG_DWORD
+                "CachedLanguageName": "English (United States)",
+                "InputMethodOverride": "0809:00000809",
+            },
+        )
+        with _install_fake_winreg(fake_winreg):
+            found = scanner._scan_branch_recursive(
+                scanner.winreg.HKEY_CURRENT_USER, "T4b"
+            )
+        klids = [v for _, v in found]
+        assert "000006ff" not in klids
+        assert "00000809" in klids
+
     def test_windows_override_tag_metadata_not_klid(self, fake_winreg):
         """WindowsOverride — это тег языка интерфейса, а не раскладка."""
         fake_winreg.set(

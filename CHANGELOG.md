@@ -9,6 +9,8 @@
 
 ### Добавлено
 - `ARCHITECTURE.md`: матрица источников раскладок (SCAN / CORRELATE / MUTATE / DIAGNOSTIC ONLY) с ролями PRIMARY/SECONDARY/CATALOG; в список источников возвращён SettingSync (был в коде, но отсутствовал в документации).
+- `ARCHITECTURE.md` §6.1: разграничение «фантом (orphan)» vs «false positive классификации» — регрессия `000006ff` относится ко второму случаю (значение найдено верно, ошибкой была интерпретация как KLID).
+- Регрессионный тест DWORD-пути `FeaturesToInstall`: в живом реестре значение хранится как `REG_DWORD 0x6ff`, а строка «000006ff» возникает лишь при рендеринге int в нормализаторе сканера; фильтр метаданных срабатывает по имени значения независимо от типа (`test_features_to_install_dword_not_klid`).
 - Инвариант-тесты `TestSourceCoverageInvariants`: состав `AFFECTED_BRANCHES` (ровно 6 источников), Admin-гвард только на `HKU\.DEFAULT`, каталог `HKLM Keyboard Layouts` никогда не является источником мутации, `_REPORT_FIELD` покрывает все ветки, рекурсивная очистка — только внутри HKCU-веток.
 
 ## [1.0.1] — 2026-09-16

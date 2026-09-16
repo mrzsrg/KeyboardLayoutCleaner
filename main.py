@@ -1953,6 +1953,10 @@ class KeyboardLayoutCleaner(ctk.CTk):
             11: "dlg_elevation_error_association",
             31: "dlg_elevation_no_assoc",
             1136: "dlg_elevation_error_bad_netpath",
+            # ERROR_CANCELLED — пользователь нажал «Нет» в окне UAC
+            1223: "dlg_elevation_uac_cancelled",
+            # ERROR_ELEVATION_REQUIRED — повышение заблокировано политикой
+            740: "dlg_elevation_elevation_required",
         }
         if result_code in error_messages:
             key = error_messages[result_code]
@@ -2042,7 +2046,16 @@ def main() -> None:
     )
     app = KeyboardLayoutCleaner()
     app._mutex_handle = mutex_handle
-    app.mainloop()
+    try:
+        app.mainloop()
+    finally:
+        # Гарантированное освобождение именованного мьютекса даже при
+        # аварийном выходе из mainloop: OS сама закроет хэндл при смерти
+        # процесса, но явный CloseHandle освобождает объект сразу — важно
+        # для elevate-цепочки (новый процесс ждёт до 60 сек).
+        if mutex_handle:
+            with contextlib.suppress(Exception):
+                _mutex_release(mutex_handle)
 
 
 if __name__ == "__main__":

@@ -1095,5 +1095,79 @@ class TestLanguageSync:
         assert layouts == {}
 
 
+class TestReviewHardening:
+    """Закрытие замечаний ревью: валидация KLID в парсерах, форма аргументов PS."""
+
+    def test_preload_keys_filter_garbage(self, fake_winreg):
+        """Мусор в Preload («1», «ru-RU») не покидает парсер (ревью п.3)."""
+        fake_winreg.set(
+            fake_winreg.HKEY_CURRENT_USER,
+            "Keyboard Layout\\Preload",
+            values={
+                "1": "00000409",
+                "2": "ru-RU",      # не KLID
+                "3": "1",          # не KLID
+                "4": "00000809",
+            },
+        )
+        with _install_fake_winreg(fake_winreg):
+            result = scanner._get_preload_keys(
+                scanner.winreg.HKEY_CURRENT_USER, "Keyboard Layout\\Preload"
+            )
+        assert result == {"00000409": "00000409", "00000809": "00000809"}
+
+    def test_substitutes_filter_garbage(self, fake_winreg):
+        """Мусорные source/target в Substitutes отбрасываются (ревью п.3)."""
+        fake_winreg.set(
+            fake_winreg.HKEY_CURRENT_USER,
+            "Keyboard Layout\\Substitutes",
+            values={
+                "00000419": "00000409",
+                "1": "00000409",       # source не KLID
+                "D0090409": "junk",    # target не KLID
+                "RU-RU": "00000409",   # source не KLID
+            },
+        )
+        with _install_fake_winreg(fake_winreg):
+            result = scanner._scan_substitutes(
+                scanner.winreg.HKEY_CURRENT_USER, "Keyboard Layout\\Substitutes"
+            )
+        assert result == {"00000419": {"target": "00000409"}}
+
+    def test_restore_ps_args_are_list_and_cyrillic_path_safe(
+        self, monkeypatch, tmp_path
+    ):
+        """Ревью п.1: путь в PS передаётся отдельным элементом списка.
+
+        shell-конкатенации нет (subprocess со списком), кириллица в
+        %TEMP% не искажает путь и не ломает вызов.
+        """
+        cyr = tmp_path / "Отчёты_и_Настройки"
+        cyr.mkdir()
+        monkeypatch.setattr("tempfile.gettempdir", lambda: str(cyr))
+        jp = cyr / "langlist.json"
+        jp.write_text(
+            json.dumps(
+                [{"LanguageTag": "ru", "InputMethodTips": ["0419:00000419"]}],
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        captured: dict[str, list[str]] = {}
+
+        def fake_run(cmd, **kwargs):
+            captured["cmd"] = cmd
+            return _proc(returncode=0, stdout="SUCCESS")
+
+        monkeypatch.setattr(cleaner, "run_hidden", fake_run)
+        assert cleaner.restore_language_list(jp) is True
+
+        cmd = captured["cmd"]
+        assert isinstance(cmd, list)          # не строка → shell-инъекция невозможна
+        assert cmd[-2] == "-JsonPath"         # путь — отдельный аргумент
+        assert "Отчёты_и_Настройки" in cmd[-1]  # кириллица не искажена
+        assert cmd[-1].endswith(".json")
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

@@ -161,6 +161,8 @@
   "brightness_ultra": "◐ Máxima (165%)",
   "status_busy_wait": "⏳ Aguarde a conclusão da operação atual",
   "list_row_terminal": "[KBD] {name}  |  entradas: {count}",
+  "dlg_elevation_uac_cancelled": "Operação cancelada: o aviso UAC foi recusado (código 1223).",
+  "dlg_elevation_elevation_required": "Elevação bloqueada (código 740): a política do sistema impede iniciar processos elevados.\nExecute o app num console de administrador.",
   "dlg_invalid_klid": "Formato KLID inválido: {klid}\n\nEsperado 8 caracteres HEX (ex.: 00000419).",
   "dlg_elevation_access_denied": "Confirme o aviso UAC, clique em Sim",
   "dlg_elevation_file_not_found": "Arquivo nao encontrado",

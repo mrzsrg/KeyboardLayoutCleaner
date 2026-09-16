@@ -161,6 +161,8 @@
   "brightness_ultra": "◐ 最亮 (165%)",
   "status_busy_wait": "⏳ 请等待当前操作完成",
   "list_row_terminal": "[KBD] {name}  |  条目: {count}",
+  "dlg_elevation_uac_cancelled": "操作已取消：UAC 提示被拒绝（代码 1223）。",
+  "dlg_elevation_elevation_required": "提权被阻止（代码 740）：系统策略禁止启动提升的进程。\n请从管理员控制台运行应用。",
   "dlg_invalid_klid": "无效的 KLID 格式：{klid}\n\n需要 8 个十六进制字符（例如 00000419）。",
   "dlg_elevation_access_denied": "确认UAC提示，点击是",
   "dlg_elevation_file_not_found": "未找到文件",

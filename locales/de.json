@@ -161,6 +161,8 @@
   "brightness_ultra": "◐ Maximal (165%)",
   "status_busy_wait": "⏳ Bitte warten, bis der Vorgang abgeschlossen ist",
   "list_row_terminal": "[KBD] {name}  |  Einträge: {count}",
+  "dlg_elevation_uac_cancelled": "Abgebrochen: die UAC-Anfrage wurde abgelehnt (Code 1223).",
+  "dlg_elevation_elevation_required": "Rechteerweiterung blockiert (Code 740): die Systemrichtlinie verhindert das Starten erweiterter Prozesse.\nStarten Sie die App aus einer Admin-Konsole.",
   "dlg_invalid_klid": "Ungültiges KLID-Format: {klid}\n\nEs werden 8 HEX-Zeichen erwartet (z. B. 00000419).",
   "dlg_elevation_access_denied": "Sie muessen den UAC-Prompt bestaetigen",
   "dlg_elevation_file_not_found": "Anwendungsdatei nicht gefunden",

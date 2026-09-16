@@ -532,3 +532,25 @@ class TestConstants:
 
         assert isinstance(main.app_version, str)
         assert len(main.app_version) > 0
+
+
+class TestElevationErrorMapping:
+    """Различимые сообщения UAC-ошибок (ревью п.5): коды 1223 и 740."""
+
+    def test_cancelled_and_elevation_required(self, monkeypatch):
+        _ensure_main(monkeypatch)
+        import main
+
+        shown = []
+        monkeypatch.setattr(
+            main.messagebox,
+            "showwarning",
+            lambda title, msg: shown.append((title, msg)),
+        )
+        main.KeyboardLayoutCleaner._show_elevation_error(1223)
+        main.KeyboardLayoutCleaner._show_elevation_error(740)
+        assert len(shown) == 2
+        # Код присутствует в тексте — пользователь видит причину
+        assert "1223" in shown[0][1]
+        assert "740" in shown[1][1]
+        assert shown[0][1] != shown[1][1]

@@ -173,6 +173,8 @@
   "status_busy_wait": "⏳ Wait for the current operation to finish",
   "list_row_terminal": "[KBD] {name}  |  entries: {count}",
   "dlg_elevation_access_denied": "Confirme el aviso UAC, click en Si",
+  "dlg_elevation_uac_cancelled": "Operación cancelada: se rechazó el aviso UAC (código 1223).",
+  "dlg_elevation_elevation_required": "Elevación bloqueada (código 740): la política del sistema impide iniciar procesos elevados.\nEjecute la app desde una consola de administrador.",
   "dlg_elevation_file_not_found": "Archivo no encontrado",
   "dlg_elevation_path_not_found": "Ruta no encontrada",
   "dlg_elevation_no_assoc": "No se pudo contactar el sistema",

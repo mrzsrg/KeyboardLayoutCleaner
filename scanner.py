@@ -165,20 +165,30 @@ def _reg_get_string(
 
 
 def _get_preload_keys(root_key: int, subkey_path: str) -> dict[str, str]:
-    """Считать ключи Preload и вернуть {hex_value: hex_value}."""
+    """Считать ключи Preload и вернуть {hex_value: hex_value}.
+
+    Валидация KLID внутри функции (defense-in-depth): мусорные значения
+    реестра («1», «ru-RU» и пр.) не покидают парсер, независимо от того,
+    проверяет ли их вызывающий код.
+    """
     result: dict[str, str] = {}
     values = _reg_get_string(root_key, subkey_path)
     for _idx, val in values.items():
         hex_code = val.strip().split("\\")[-1].lower() if val else ""
-        if not hex_code:
-            # Пустое значение — пропускаем, чтобы не создавать фантомные записи
+        if not hex_code or not _KLID_RE.match(hex_code):
+            # Пустое/некорректное значение — пропускаем, чтобы не создавать
+            # фантомные записи (исторически фильтр был на уровне вызовов)
             continue
         result[hex_code] = hex_code
     return result
 
 
 def _scan_substitutes(root_key: int, subkey_path: str) -> dict[str, dict[str, str]]:
-    """Считать ключи Substitutes и вернуть {source_klid: {"target": ...}}."""
+    """Считать ключи Substitutes и вернуть {source_klid: {"target": ...}}.
+
+    Обе стороны пары (source и target) обязаны быть валидными KLID —
+    см. комментарий в :func:`_get_preload_keys`.
+    """
     result: dict[str, dict[str, str]] = {}
     values = _reg_get_string(root_key, subkey_path)
     for src, target in values.items():
@@ -187,8 +197,9 @@ def _scan_substitutes(root_key: int, subkey_path: str) -> dict[str, dict[str, st
         # сравниваются в нижнем
         src_norm = src.strip().lower()
         target_hex = target.strip().split("\\")[-1].lower() if target else ""
-        if src_norm and target_hex:
-            result[src_norm] = {"target": target_hex}
+        if not (_KLID_RE.match(src_norm) and _KLID_RE.match(target_hex)):
+            continue
+        result[src_norm] = {"target": target_hex}
     return result
 
 
@@ -649,11 +660,20 @@ def _get_language_list_from_powershell() -> list[dict[str, Any]]:
             timeout=20,
         )
         if result.returncode != 0:
-            logger.warning(
-                "Get-WinUserLanguageList: returncode=%s, stderr=%s",
-                result.returncode,
-                (result.stderr or "").strip()[:200],
-            )
+            stderr = (result.stderr or "").strip()
+            if "not recognized" in stderr.lower() or "не распознан" in stderr.lower():
+                logger.warning(
+                    "Get-WinUserLanguageList недоступен в этой сборке Windows "
+                    "(командлет не распознан). PowerShell-источник пропущен — "
+                    "скан продолжится по реестровым веткам. Для полного списка "
+                    "обновите Windows/PowerShell или добавьте модуль LanguageList."
+                )
+            else:
+                logger.warning(
+                    "Get-WinUserLanguageList: returncode=%s, stderr=%s",
+                    result.returncode,
+                    stderr[:200],
+                )
             return []
 
         return _parse_language_entries(result.stdout)

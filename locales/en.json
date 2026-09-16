@@ -123,6 +123,8 @@
   "dlg_backups_read_error": "Failed to read the backups folder:\n{error}",
   "dlg_elevation_title": "Elevation",
   "dlg_elevation_cancelled": "Failed to start the process with administrator privileges (code {code}).\nThe UAC prompt was probably declined.\nThe application will continue with its current privileges.",
+  "dlg_elevation_uac_cancelled": "Operation cancelled: the UAC prompt was declined (code 1223).",
+  "dlg_elevation_elevation_required": "Elevation is blocked (code 740): system policy prevents starting elevated processes.\nRun the app from an Administrator console.",
   "dlg_elevation_error": "Failed to restart as administrator:\n{error}",
   "dlg_elevation_access_denied": "You need to confirm the UAC prompt.\n\nClick «Yes» on the User Account Control window\nto restart the app with administrator privileges.",
   "dlg_elevation_file_not_found": "Application file not found.",

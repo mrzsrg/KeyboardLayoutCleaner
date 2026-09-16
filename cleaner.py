@@ -619,6 +619,102 @@ def _klid_variants(layout_klid: str) -> set[str]:
     return variants
 
 
+def _branch_value_matches(
+    name: str, val: str, variants: set[str], match_mode: str
+) -> bool:
+    """Совпадает ли значение реестра с одним из представлений KLID."""
+    val_l = val.strip().lower()
+    # Формат "0409:00000409" (LANGID:KLID) из User Profile/CTF —
+    # сравниваем ВТОРУЮ часть (KLID), а не всю строку.
+    tip = _TIP_KLID_RE.match(val_l)
+    if tip and tip.group(1).lower() in variants:
+        return True
+    if match_mode == "substitutes":
+        return name.strip().lower() in variants or any(v in val_l for v in variants)
+    parts = [p.strip().lower() for p in val.split("\\")]
+    if (
+        name.strip().lower() in variants
+        or val_l in variants
+        or bool(set(parts) & variants)
+    ):
+        return True
+    # Проверяем BCP-47 тег (SettingSync хранит теги языков)
+    # variants содержит целевой KLID — ищем соответствующие теги
+    for tag, tag_klid in LAYOUT_MAP.items():
+        if tag.lower() == val_l and tag_klid.lower() in variants:
+            return True
+    return False
+
+
+def _walk_branch_recursive(
+    root_key: int,
+    subkey_path: str,
+    key_path: str,
+    depth: int,
+    variants: set[str],
+    match_mode: str,
+    delete: bool,
+    deleted: list[str],
+) -> None:
+    """Рекурсивный обход поддерева: пометить (и удалить) значения KLID."""
+    if depth > _MAX_CLEAN_DEPTH:
+        logger.warning("Достигнута максимальная глубина обхода: %s", key_path)
+        return
+    try:
+        # KEY_READ | KEY_WRITE достаточно для EnumValue/EnumKey/DeleteValue/
+        # DeleteKey; KEY_ALL_ACCESS может упасть на защищённых подключях
+        # даже при достаточных правах.
+        with winreg.OpenKey(
+            root_key, key_path, 0, winreg.KEY_READ | winreg.KEY_WRITE
+        ) as key:
+            # Собираем ВСЕ значения во временный список, затем удаляем
+            # отдельным циклом. Прямое удаление во время итерации
+            # EnumValue пропускает элементы из-за сдвига индексов.
+            entries: list[tuple[str, object]] = []
+            v_idx = 0
+            while True:
+                try:
+                    name, val, _ = winreg.EnumValue(key, v_idx)
+                    entries.append((name, val))
+                    v_idx += 1
+                except OSError:
+                    break
+
+            for name, val in entries:
+                if not _branch_value_matches(name, str(val), variants, match_mode):
+                    continue
+                if delete:
+                    try:
+                        winreg.DeleteValue(key, name)
+                    except OSError as exc:
+                        logger.warning(
+                            "Не удалено %s / %s: %s", key_path, name, exc
+                        )
+                        continue
+                rel = key_path[len(subkey_path) :].lstrip("\\")
+                deleted.append(f"{rel}\\{name}" if rel else name)
+            # Подключи
+            sub_idx = 0
+            while True:
+                try:
+                    sub = winreg.EnumKey(key, sub_idx)
+                except OSError:
+                    break
+                sub_idx += 1
+                _walk_branch_recursive(
+                    root_key,
+                    subkey_path,
+                    key_path + "\\" + sub,
+                    depth + 1,
+                    variants,
+                    match_mode,
+                    delete,
+                    deleted,
+                )
+    except (FileNotFoundError, PermissionError, OSError) as exc:
+        logger.debug("Ветка пропущена %s: %s", key_path, exc)
+
+
 def _clean_branch_recursive(
     root_key: int,
     subkey_path: str,
@@ -642,80 +738,16 @@ def _clean_branch_recursive(
     """
     deleted: list[str] = []
     variants = _klid_variants(layout_klid)
-
-    def _matches(name: str, val: str) -> bool:
-        val_l = val.strip().lower()
-        # Формат "0409:00000409" (LANGID:KLID) из User Profile/CTF —
-        # сравниваем ВТОРУЮ часть (KLID), а не всю строку.
-        tip = _TIP_KLID_RE.match(val_l)
-        if tip and tip.group(1).lower() in variants:
-            return True
-        if match_mode == "substitutes":
-            return name.strip().lower() in variants or any(v in val_l for v in variants)
-        parts = [p.strip().lower() for p in val.split("\\")]
-        if (
-            name.strip().lower() in variants
-            or val_l in variants
-            or bool(set(parts) & variants)
-        ):
-            return True
-        # Проверяем BCP-47 тег (SettingSync хранит теги языков)
-        # variants содержит целевой KLID — ищем соответствующие теги
-        for tag, tag_klid in LAYOUT_MAP.items():
-            if tag.lower() == val_l and tag_klid.lower() in variants:
-                return True
-        return False
-
-    def _walk(key_path: str, depth: int) -> None:
-        if depth > _MAX_CLEAN_DEPTH:
-            logger.warning("Достигнута максимальная глубина обхода: %s", key_path)
-            return
-        try:
-            # KEY_READ | KEY_WRITE достаточно для EnumValue/EnumKey/DeleteValue/
-            # DeleteKey; KEY_ALL_ACCESS может упасть на защищённых подключях
-            # даже при достаточных правах.
-            with winreg.OpenKey(
-                root_key, key_path, 0, winreg.KEY_READ | winreg.KEY_WRITE
-            ) as key:
-                # Собираем ВСЕ значения во временный список, затем удаляем
-                # отдельным циклом. Прямое удаление во время итерации
-                # EnumValue пропускает элементы из-за сдвига индексов.
-                entries: list[tuple[str, object]] = []
-                v_idx = 0
-                while True:
-                    try:
-                        name, val, _ = winreg.EnumValue(key, v_idx)
-                        entries.append((name, val))
-                        v_idx += 1
-                    except OSError:
-                        break
-
-                for name, val in entries:
-                    if not _matches(name, str(val)):
-                        continue
-                    if delete:
-                        try:
-                            winreg.DeleteValue(key, name)
-                        except OSError as exc:
-                            logger.warning(
-                                "Не удалено %s / %s: %s", key_path, name, exc
-                            )
-                            continue
-                    rel = key_path[len(subkey_path) :].lstrip("\\")
-                    deleted.append(f"{rel}\\{name}" if rel else name)
-                # Подключи
-                sub_idx = 0
-                while True:
-                    try:
-                        sub = winreg.EnumKey(key, sub_idx)
-                    except OSError:
-                        break
-                    sub_idx += 1
-                    _walk(key_path + "\\" + sub, depth + 1)
-        except (FileNotFoundError, PermissionError, OSError) as exc:
-            logger.debug("Ветка пропущена %s: %s", key_path, exc)
-
-    _walk(subkey_path, 0)
+    _walk_branch_recursive(
+        root_key,
+        subkey_path,
+        subkey_path,
+        0,
+        variants,
+        match_mode,
+        delete,
+        deleted,
+    )
     return deleted
 
 
@@ -862,6 +894,78 @@ def _clean_intl_profile(
 _CTF_PROFILE_VALUE_NAMES = {"keyboardlayout", "klid"}
 
 
+def _walk_ctf_profiles(
+    root_key: int,
+    ctf_subkey: str,
+    key_path: str,
+    depth: int,
+    variants: set[str],
+    base_low: int,
+    delete: bool,
+    doomed: list[str],
+) -> None:
+    """Рекурсивный обход CTF: пометить (и удалить) ключи профилей раскладки."""
+    if depth > _MAX_CLEAN_DEPTH:
+        return
+    try:
+        # KEY_READ | KEY_WRITE достаточно для EnumKey/DeleteKey;
+        # KEY_ALL_ACCESS может упасть на защищённых подключях.
+        with winreg.OpenKey(
+            root_key, key_path, 0, winreg.KEY_READ | winreg.KEY_WRITE
+        ) as key:
+            # Если ключ лежит под 0x???????? (LANGID языка), CTF мог
+            # записать HKL: (LANGID << 16) | KLID — десятичным числом
+            local_variants = variants
+            for part in reversed(key_path.split("\\")):
+                m_lang = re.fullmatch(r"0x([0-9a-f]{8})", part.lower())
+                if m_lang and base_low:
+                    langid = int(m_lang.group(1), 16) & 0xFFFF
+                    hkl = (langid << 16) | base_low
+                    local_variants = variants | {
+                        str(hkl),
+                        f"{hkl:08x}",
+                    }
+                    break
+            is_profile = False
+            idx = 0
+            while True:
+                try:
+                    name, val, _vtype = winreg.EnumValue(key, idx)
+                except OSError:
+                    break
+                if (
+                    str(name).strip().lower() in _CTF_PROFILE_VALUE_NAMES
+                    and str(val).strip().lower() in local_variants
+                ):
+                    is_profile = True
+                idx += 1
+            if is_profile:
+                rel = key_path[len(ctf_subkey) :].lstrip("\\")
+                if delete:
+                    _delete_subtree(root_key, key_path)
+                doomed.append(f"{rel} <профиль TSF целиком>")
+                return  # внутрь удалённого поддерева не спускаемся
+            sub_idx = 0
+            while True:
+                try:
+                    sub = winreg.EnumKey(key, sub_idx)
+                except OSError:
+                    break
+                sub_idx += 1
+                _walk_ctf_profiles(
+                    root_key,
+                    ctf_subkey,
+                    f"{key_path}\\{sub}",
+                    depth + 1,
+                    variants,
+                    base_low,
+                    delete,
+                    doomed,
+                )
+    except (FileNotFoundError, PermissionError, OSError) as exc:
+        logger.debug("CTF-профили: ветка пропущена %s: %s", key_path, exc)
+
+
 def _clean_ctf_profiles(
     root_key: int,
     ctf_subkey: str,
@@ -889,64 +993,14 @@ def _clean_ctf_profiles(
         БЫЛИ бы удалены).
     """
     variants = _klid_variants(layout_klid)
-    # Младшее слово KLID — для вычисления HKL-форм (см. _walk)
+    # Младшее слово KLID — для вычисления HKL-форм
     m_low = re.fullmatch(r"[0-9a-f]{8}", layout_klid.strip().lower())
     base_low = int(m_low.group(0), 16) & 0xFFFF if m_low else 0
     doomed: list[str] = []
 
-    def _walk(key_path: str, depth: int) -> None:
-        if depth > _MAX_CLEAN_DEPTH:
-            return
-        try:
-            # KEY_READ | KEY_WRITE достаточно для EnumKey/DeleteKey;
-            # KEY_ALL_ACCESS может упасть на защищённых подключях.
-            with winreg.OpenKey(
-                root_key, key_path, 0, winreg.KEY_READ | winreg.KEY_WRITE
-            ) as key:
-                # Если ключ лежит под 0x???????? (LANGID языка), CTF мог
-                # записать HKL: (LANGID << 16) | KLID — десятичным числом
-                local_variants = variants
-                for part in reversed(key_path.split("\\")):
-                    m_lang = re.fullmatch(r"0x([0-9a-f]{8})", part.lower())
-                    if m_lang and base_low:
-                        langid = int(m_lang.group(1), 16) & 0xFFFF
-                        hkl = (langid << 16) | base_low
-                        local_variants = variants | {
-                            str(hkl),
-                            f"{hkl:08x}",
-                        }
-                        break
-                is_profile = False
-                idx = 0
-                while True:
-                    try:
-                        name, val, _vtype = winreg.EnumValue(key, idx)
-                    except OSError:
-                        break
-                    if (
-                        str(name).strip().lower() in _CTF_PROFILE_VALUE_NAMES
-                        and str(val).strip().lower() in local_variants
-                    ):
-                        is_profile = True
-                    idx += 1
-                if is_profile:
-                    rel = key_path[len(ctf_subkey) :].lstrip("\\")
-                    if delete:
-                        _delete_subtree(root_key, key_path)
-                    doomed.append(f"{rel} <профиль TSF целиком>")
-                    return  # внутрь удалённого поддерева не спускаемся
-                sub_idx = 0
-                while True:
-                    try:
-                        sub = winreg.EnumKey(key, sub_idx)
-                    except OSError:
-                        break
-                    sub_idx += 1
-                    _walk(f"{key_path}\\{sub}", depth + 1)
-        except (FileNotFoundError, PermissionError, OSError) as exc:
-            logger.debug("CTF-профили: ветка пропущена %s: %s", key_path, exc)
-
-    _walk(ctf_subkey, 0)
+    _walk_ctf_profiles(
+        root_key, ctf_subkey, ctf_subkey, 0, variants, base_low, delete, doomed
+    )
 
     if delete:
         # Опустевшие родители: ...\0x00000419\{GUID} -> ...\0x00000419
@@ -1519,7 +1573,7 @@ def list_backups(backup_dir: str | Path | None = None) -> list[dict[str, Any]]:
     if not directory.is_dir():
         return []
 
-    pattern = re.compile(r"^keyboard_layout_backup_(\d{8}_\d{6})\.reg$")
+    pattern = re.compile(r"^keyboard_layout_backup_(\d{8}_\d{6}(?:_\d{6})?)\.reg$")
     reg_files = [
         p
         for p in directory.glob("keyboard_layout_backup_*.reg")
@@ -1532,7 +1586,8 @@ def list_backups(backup_dir: str | Path | None = None) -> list[dict[str, Any]]:
         if not match:
             continue
         try:
-            ts = datetime.datetime.strptime(match.group(1), "%Y%m%d_%H%M%S")
+            # Базовые 15 символов "YYYYMMDD_HHMMSS" — микросекунды не нужны
+            ts = datetime.datetime.strptime(match.group(1)[:15], "%Y%m%d_%H%M%S")
         except ValueError:
             continue
         json_file = reg_file.with_suffix(".langlist.json")
@@ -1697,6 +1752,52 @@ def _current_preload_klids(admin: bool) -> set[str]:
     return {k for k in klids if re.fullmatch(r"[0-9a-f]{8}", k)}
 
 
+def _wipe_branches(
+    branches_now: list[tuple[str, str, str, bool]],
+    result: dict[str, Any],
+    layout_id: str,
+) -> int:
+    """Одним проходом очистить все ветки реестра (безопасно повторять)."""
+    total = 0
+    for root, subkey, mode, admin_required in branches_now:
+        if admin_required and not result["admin_privileges"]:
+            continue
+        field = _report_field_for(root, subkey)
+        if subkey in _recursive_subkeys():
+            deleted: list[str] = []
+            if subkey == _ctf_subkey():
+                profiles = _clean_ctf_profiles(_ROOT_CONST[root], subkey, layout_id)
+                result["ctf_profiles_deleted"] = (
+                    result.get("ctf_profiles_deleted", []) + profiles
+                )
+                total += len(profiles)
+                if profiles:
+                    logger.info(
+                        "Очистка CTF: удалено TSF-профилей целиком: %d",
+                        len(profiles),
+                    )
+            deleted += _clean_branch_recursive(
+                _ROOT_CONST[root], subkey, layout_id, mode
+            )
+            if subkey == _intl_subkey():
+                # User Profile: точечная очистка записей KLID
+                deleted += _clean_intl_profile(_ROOT_CONST[root], subkey, layout_id)
+        elif mode == "substitutes":
+            deleted = _clean_substitutes_keys(_ROOT_CONST[root], subkey, layout_id)
+        else:
+            deleted = _clean_preload_keys(_ROOT_CONST[root], subkey, layout_id)
+        result[field] = result.get(field, []) + deleted
+        if deleted:
+            logger.info(
+                "Очистка %s / %s: удалено значений: %d",
+                root,
+                subkey,
+                len(deleted),
+            )
+        total += len(deleted)
+    return total
+
+
 def delete_layout(layout_id: str) -> dict[str, Any]:
     """
     Безопасно удалить указанную раскладку клавиатуры из реестра
@@ -1824,51 +1925,9 @@ def delete_layout(layout_id: str) -> dict[str, Any]:
     retry_total = 0
     ok, detail = False, "SKIPPED"
 
-    def _wipe() -> int:
-        """Одним проходом очистить все ветки (безопасно повторять)."""
-        total = 0
-        for root, subkey, mode, admin_required in branches_now:
-            if admin_required and not result["admin_privileges"]:
-                continue
-            field = _report_field_for(root, subkey)
-            if subkey in _recursive_subkeys():
-                deleted = []
-                if subkey == _ctf_subkey():
-                    profiles = _clean_ctf_profiles(_ROOT_CONST[root], subkey, layout_id)
-                    result["ctf_profiles_deleted"] = (
-                        result.get("ctf_profiles_deleted", []) + profiles
-                    )
-                    total += len(profiles)
-                    if profiles:
-                        logger.info(
-                            "Очистка CTF: удалено TSF-профилей целиком: %d",
-                            len(profiles),
-                        )
-
-                deleted += _clean_branch_recursive(
-                    _ROOT_CONST[root], subkey, layout_id, mode
-                )
-                if subkey == _intl_subkey():
-                    # User Profile: точечная очистка записей KLID
-                    deleted += _clean_intl_profile(_ROOT_CONST[root], subkey, layout_id)
-            elif mode == "substitutes":
-                deleted = _clean_substitutes_keys(_ROOT_CONST[root], subkey, layout_id)
-            else:
-                deleted = _clean_preload_keys(_ROOT_CONST[root], subkey, layout_id)
-            result[field] = result.get(field, []) + deleted
-            if deleted:
-                logger.info(
-                    "Очистка %s / %s: удалено значений: %d",
-                    root,
-                    subkey,
-                    len(deleted),
-                )
-            total += len(deleted)
-        return total
-
     with CtfmonSuspender() as suspender:
         # Шаг 3: Очистка веток реестра (идемпотентная — можно повторять)
-        total_deleted = _wipe()
+        total_deleted = _wipe_branches(branches_now, result, layout_id)
 
         # Шаг 4: Синхронизация списка языков через PowerShell
         ok, detail = _sync_language_list_via_powershell(layout_id)
@@ -1896,7 +1955,7 @@ def delete_layout(layout_id: str) -> dict[str, Any]:
 
         # Шаг 5: Верификация — повторная подчистка того, что служба могла
         # вернуть между шагами 3 и 4.
-        retry_total = _wipe()
+        retry_total = _wipe_branches(branches_now, result, layout_id)
 
     # Результат запуска ctfmon фиксируется в __exit__ контекстного менеджера
     # (CtfmonSuspender) — служба уже запущена там, повторный вызов не нужен.

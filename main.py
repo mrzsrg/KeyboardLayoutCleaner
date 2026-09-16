@@ -645,6 +645,37 @@ class KeyboardLayoutCleaner(ctk.CTk):
         # Подписи переключателей вида (интерфейс/яркость) в шапке
         if self.admin_banner:
             self.admin_banner.apply_language()
+        self._apply_action_button_texts()
+        if self.block_sync_checkbox:
+            self.block_sync_checkbox.configure(text=_t("chk_block_cloud_sync"))
+        self._update_admin_banner()
+        if self.details_title_label:
+            self.details_title_label.configure(text=_t("details_title"))
+        self._apply_list_titles()
+        # Строки списка пересоздаются с учётом новой локали
+        if self.layouts_data:
+            self._render_layouts_list()
+        # Плейсхолдер списка (виден только до первого сканирования)
+        if self._list_placeholder:
+            try:
+                self._list_placeholder.configure(text=_t("list_placeholder_after_scan"))
+            except Exception:
+                logger.exception("Не удалось обновить placeholder списка")
+        self._apply_details_panel()
+        # Метка последних бэкапов (пути не локализуются)
+        if self.backup_label and any(self._last_backup_info):
+            reg_path, lang_path = self._last_backup_info
+            parts = []
+            if reg_path:
+                parts.append(_t("dlg_backup_registry", path=reg_path))
+            if lang_path:
+                parts.append(_t("dlg_backup_langlist", path=lang_path))
+            self.backup_label.configure(text="\n".join(parts))
+        # Строка-подсказка этапа (текст берётся из локали заново)
+        self._set_stage(self._stage)
+
+    def _apply_action_button_texts(self) -> None:
+        """Перевести подписи кнопок действий (кроме ⏳-состояний)."""
         # ⏳-состояния не трогаем: временный текст вернётся сам по завершении
         if self.scan_button and not str(self.scan_button.cget("text")).startswith("⏳"):
             self.scan_button.configure(
@@ -657,47 +688,28 @@ class KeyboardLayoutCleaner(ctk.CTk):
         ):
             if widget and not str(widget.cget("text")).startswith("⏳"):
                 widget.configure(text=_t(key))
-        if self.block_sync_checkbox:
-            self.block_sync_checkbox.configure(text=_t("chk_block_cloud_sync"))
-        self._update_admin_banner()
-        if self.details_title_label:
-            self.details_title_label.configure(text=_t("details_title"))
-        if self.list_title_label:
-            if not self._scan_done:
-                self.list_title_label.configure(text=_t("list_placeholder_before_scan"))
-            elif self.layouts_data:
-                self.list_title_label.configure(
-                    text=_t("list_title_found", count=len(self.layouts_data))
-                )
-            else:
-                self.list_title_label.configure(text=_t("list_title_empty"))
-        # Строки списка пересоздаются с учётом новой локали
-        if self.layouts_data:
-            self._render_layouts_list()
-        # Плейсхолдер списка (виден только до первого сканирования)
-        if self._list_placeholder:
-            try:
-                self._list_placeholder.configure(text=_t("list_placeholder_after_scan"))
-            except Exception:
-                logger.exception("Не удалось обновить placeholder списка")
-        # Панель деталей: перерисовать текущее состояние
+
+    def _apply_list_titles(self) -> None:
+        """Перевести заголовок списка раскладок по текущему состоянию."""
+        if not self.list_title_label:
+            return
+        if not self._scan_done:
+            self.list_title_label.configure(text=_t("list_placeholder_before_scan"))
+        elif self.layouts_data:
+            self.list_title_label.configure(
+                text=_t("list_title_found", count=len(self.layouts_data))
+            )
+        else:
+            self.list_title_label.configure(text=_t("list_title_empty"))
+
+    def _apply_details_panel(self) -> None:
+        """Перерисовать панель деталей в текущей локали."""
         if not self.layouts_data:
             self._render_initial_hint()
         elif self.current_layout_klid in self.layouts_data:
             self._show_layout_details(self.current_layout_klid)
         else:
             self._render_layouts_overview()
-        # Метка последних бэкапов (пути не локализуются)
-        if self.backup_label and any(self._last_backup_info):
-            reg_path, lang_path = self._last_backup_info
-            parts = []
-            if reg_path:
-                parts.append(_t("dlg_backup_registry", path=reg_path))
-            if lang_path:
-                parts.append(_t("dlg_backup_langlist", path=lang_path))
-            self.backup_label.configure(text="\n".join(parts))
-        # Строка-подсказка этапа (текст берётся из локали заново)
-        self._set_stage(self._stage)
 
     # ------------------------------------------------------------------
     # Смена интерфейса (classic/terminal) и яркости шрифтов

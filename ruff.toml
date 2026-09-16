@@ -32,7 +32,9 @@ ignore = [
 ]
 
 [lint.mccabe]
-max-complexity = 50
+# Умеренный порог сложности (ранее 50 фактически отключал проверку).
+# Сложные функции декомпозированы на конвейеры мелких хелперов.
+max-complexity = 15
 
 [lint.isort]
 known-first-party = ["layout_cleaner"]

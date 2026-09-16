@@ -187,7 +187,7 @@ def _write_json(data, tmp_dir=None):
     return path
 
 
-def _make_ctk():
+def _make_ctk():  # noqa: C901 - тестовый мок customtkinter: намеренно всеобъемлющий
     """Create a mock customtkinter module with full widget support.
 
     Includes configure() state tracking, grid/pack, textbox tags,

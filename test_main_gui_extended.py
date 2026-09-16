@@ -9,7 +9,7 @@ from unittest import mock
 import pytest
 
 
-def _make_ctk():
+def _make_ctk():  # noqa: C901 - тестовый мок customtkinter: намеренно всеобъемлющий
     ctk = types.ModuleType("customtkinter")
 
     class Widget:

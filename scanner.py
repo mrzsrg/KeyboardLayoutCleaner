@@ -648,6 +648,80 @@ def _get_language_list_from_powershell() -> list[dict[str, Any]]:
 # ---------------------------------------------------------------------------
 
 
+def _scan_hkcu_branches(ensure_layout, add_location) -> None:
+    """Сканировать ветки HKCU (Preload / Substitutes / рекурсивные)."""
+    for subkey_path, scan_type in HKCU_BRANCHES:
+        if scan_type == "preload":
+            for klid in _get_preload_keys(winreg.HKEY_CURRENT_USER, subkey_path):
+                if not _KLID_RE.match(klid):
+                    continue
+                add_location(klid, f"HKCU\\{subkey_path}", klid)
+        elif scan_type == "substitutes":
+            subs = _scan_substitutes(winreg.HKEY_CURRENT_USER, subkey_path)
+            for src_klid, info in subs.items():
+                if not _KLID_RE.match(src_klid):
+                    continue
+                target = info.get("target", src_klid)
+                add_location(
+                    src_klid,
+                    f"HKCU\\{subkey_path}",
+                    f"source={src_klid} -> target={target}",
+                )
+                if _KLID_RE.match(target):
+                    ensure_layout(target)
+
+        # Ветки, где данные лежат в подключах (CTF, User Profile):
+        # рекурсивный скан поддерева в дополнение к прямым значениям
+        if subkey_path in _RECURSIVE_SCAN:
+            for rel, klid in _scan_branch_recursive(
+                winreg.HKEY_CURRENT_USER, subkey_path
+            ):
+                add_location(klid, f"HKCU\\{subkey_path}", f"{rel}={klid}")
+
+
+def _scan_hklm_branches(add_location) -> None:
+    """Сканировать ветки HKLM (каталог раскладок — только Preload)."""
+    for subkey_path, scan_type in HKLM_BRANCHES:
+        if scan_type == "preload":
+            values = _reg_get_string(winreg.HKEY_LOCAL_MACHINE, subkey_path)
+            for name, value in values.items():
+                if not name:
+                    continue
+                klid = name.strip().lower()
+                if not _KLID_RE.match(klid):
+                    continue
+                add_location(klid, f"HKLM\\{subkey_path}", f"{name}={value}")
+
+
+def _scan_hku_branches(add_location) -> None:
+    """Сканировать ветки HKU (.DEFAULT Preload)."""
+    for subkey_path, scan_type in HKU_BRANCHES:
+        if scan_type == "preload":
+            for klid in _get_preload_keys(winreg.HKEY_USERS, subkey_path):
+                if not _KLID_RE.match(klid):
+                    continue
+                add_location(klid, f"HKU\\{subkey_path}", klid)
+
+
+def _scan_powershell_languages(layout_map, ensure_layout) -> None:
+    """Добавить раскладки из Get-WinUserLanguageList (PowerShell)."""
+    pw_langs = _get_language_list_from_powershell()
+    for entry in pw_langs:
+        klid = entry.get("KeyboardLayoutId", "")
+        tag = entry.get("LanguageTag", "")
+        if not klid:
+            continue
+        # LAYOUT_MAP намеренно не мутируется во время скана:
+        # запись в глобальный словарь из рабочего потока = гонка с GUI
+        ensure_layout(klid)
+        layout_map[klid]["locations"].append(
+            {
+                "path": "PowerShell\\Get-WinUserLanguageList",
+                "value": f"LanguageTag={tag}, KLID={klid}",
+            }
+        )
+
+
 def scan_keyboard_layouts() -> dict[str, list[dict[str, str]]]:
     """
     Просканировать реестр Windows (HKCU, HKLM, HKU) и PowerShell,
@@ -679,82 +753,10 @@ def scan_keyboard_layouts() -> dict[str, list[dict[str, str]]]:
         _ensure_layout(klid)
         layout_map[klid]["locations"].append({"path": path, "value": value})
 
-    # ------------------------------------------------------------------
-    # 1. Сканирование HKCU веток
-    # ------------------------------------------------------------------
-    for subkey_path, scan_type in HKCU_BRANCHES:
-        if scan_type == "preload":
-            for klid in _get_preload_keys(winreg.HKEY_CURRENT_USER, subkey_path):
-                if not _KLID_RE.match(klid):
-                    continue
-                _add_location(klid, f"HKCU\\{subkey_path}", klid)
-        elif scan_type == "substitutes":
-            subs = _scan_substitutes(winreg.HKEY_CURRENT_USER, subkey_path)
-            for src_klid, info in subs.items():
-                if not _KLID_RE.match(src_klid):
-                    continue
-                target = info.get("target", src_klid)
-                _add_location(
-                    src_klid,
-                    f"HKCU\\{subkey_path}",
-                    f"source={src_klid} -> target={target}",
-                )
-                if _KLID_RE.match(target):
-                    _ensure_layout(target)
-
-        # Ветки, где данные лежат в подключах (CTF, User Profile):
-        # рекурсивный скан поддерева в дополнение к прямым значениям
-        if subkey_path in _RECURSIVE_SCAN:
-            for rel, klid in _scan_branch_recursive(
-                winreg.HKEY_CURRENT_USER, subkey_path
-            ):
-                _add_location(klid, f"HKCU\\{subkey_path}", f"{rel}={klid}")
-
-    # ------------------------------------------------------------------
-    # 2. Сканирование HKLM веток
-    # ------------------------------------------------------------------
-    for subkey_path, scan_type in HKLM_BRANCHES:
-        if scan_type == "preload":
-            values = _reg_get_string(winreg.HKEY_LOCAL_MACHINE, subkey_path)
-            for name, value in values.items():
-                if name:
-                    klid = name.strip().lower()
-                    if not _KLID_RE.match(klid):
-                        continue
-                    if klid:
-                        _add_location(
-                            klid,
-                            f"HKLM\\{subkey_path}",
-                            f"{name}={value}",
-                        )
-
-    # ------------------------------------------------------------------
-    # 3. Сканирование HKU веток
-    # ------------------------------------------------------------------
-    for subkey_path, scan_type in HKU_BRANCHES:
-        if scan_type == "preload":
-            for klid in _get_preload_keys(winreg.HKEY_USERS, subkey_path):
-                if not _KLID_RE.match(klid):
-                    continue
-                _add_location(klid, f"HKU\\{subkey_path}", klid)
-
-    # ------------------------------------------------------------------
-    # 4. PowerShell: Get-WinUserLanguageList
-    # ------------------------------------------------------------------
-    pw_langs = _get_language_list_from_powershell()
-    for entry in pw_langs:
-        klid = entry.get("KeyboardLayoutId", "")
-        tag = entry.get("LanguageTag", "")
-        if klid:
-            # LAYOUT_MAP намеренно не мутируется во время скана:
-            # запись в глобальный словарь из рабочего потока = гонка с GUI
-            _ensure_layout(klid)
-            layout_map[klid]["locations"].append(
-                {
-                    "path": "PowerShell\\Get-WinUserLanguageList",
-                    "value": f"LanguageTag={tag}, KLID={klid}",
-                }
-            )
+    _scan_hkcu_branches(_ensure_layout, _add_location)
+    _scan_hklm_branches(_add_location)
+    _scan_hku_branches(_add_location)
+    _scan_powershell_languages(layout_map, _ensure_layout)
 
     # ------------------------------------------------------------------
     # Сортировка результатов по klid

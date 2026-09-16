@@ -327,7 +327,7 @@ def backup_registry(
     backup_dir_path = Path(backup_dir) if backup_dir else get_app_dir() / "backups"
     backup_dir_path.mkdir(parents=True, exist_ok=True)
 
-    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     backup_file = backup_dir_path / f"keyboard_layout_backup_{timestamp}.reg"
 
     # reg export ПЕРЕЗАПИСЫВАЕТ целевой файл (/y), поэтому прямой экспорт
@@ -583,9 +583,6 @@ def _clean_substitutes_keys(
                 ):
                     if delete:
                         winreg.DeleteValue(key, name)
-                    else:
-                        # dry-run: индексы не сдвигаются — идём дальше
-                        idx += 1
                     deleted.append(name)
     except (FileNotFoundError, PermissionError, OSError):
         pass
@@ -1225,7 +1222,8 @@ class CtfmonSuspender:
     """
 
     def __init__(self) -> None:
-        self._was_started = False
+        # Результат запуска ctfmon — для отчёта delete_layout (ctfmon_started).
+        self.started: bool | None = None
 
     def __enter__(self) -> "CtfmonSuspender":
         _stop_ctfmon()
@@ -1237,7 +1235,7 @@ class CtfmonSuspender:
         exc_val: BaseException | None,
         exc_tb: Any | None,
     ) -> None:
-        _start_ctfmon()
+        self.started = _start_ctfmon()
 
 
 def _restart_ctfmon() -> bool:
@@ -1770,7 +1768,6 @@ def delete_layout(layout_id: str) -> dict[str, Any]:
         "language_sync_block_detail": "",
         "welcome_screen_synced": False,
         "welcome_screen_sync_detail": "",
-        "permission_errors": [],  # Ошибки прав доступа при очистке
         "other_deleted": [],  # Ветки вне стандартного маппинга (sandbox и пр.)
     }
 
@@ -1827,7 +1824,7 @@ def delete_layout(layout_id: str) -> dict[str, Any]:
     retry_total = 0
     ok, detail = False, "SKIPPED"
 
-    def _wipe(collect_permission_errors: bool = False) -> int:
+    def _wipe() -> int:
         """Одним проходом очистить все ветки (безопасно повторять)."""
         total = 0
         for root, subkey, mode, admin_required in branches_now:
@@ -1869,9 +1866,9 @@ def delete_layout(layout_id: str) -> dict[str, Any]:
             total += len(deleted)
         return total
 
-    with CtfmonSuspender():
+    with CtfmonSuspender() as suspender:
         # Шаг 3: Очистка веток реестра (идемпотентная — можно повторять)
-        total_deleted = _wipe(collect_permission_errors=True)
+        total_deleted = _wipe()
 
         # Шаг 4: Синхронизация списка языков через PowerShell
         ok, detail = _sync_language_list_via_powershell(layout_id)
@@ -1899,41 +1896,11 @@ def delete_layout(layout_id: str) -> dict[str, Any]:
 
         # Шаг 5: Верификация — повторная подчистка того, что служба могла
         # вернуть между шагами 3 и 4.
-        retry_total = _wipe(collect_permission_errors=True)
+        retry_total = _wipe()
 
-    # ctfmon_started устанавливается в __exit__ контекстного менеджера
-    # через проверку результата _start_ctfmon()
-    ctfmon_started = _start_ctfmon() is not False  # True если успешно или не требуется
-
-    # Сбор информации об ошибках прав доступа
-    permission_errors: list[str] = []
-    for _branch_path, deleted in [
-        ("HKCU\\Keyboard Layout\\Preload", result.get("hkcu_preload_deleted", [])),
-        (
-            "HKCU\\Keyboard Layout\\Substitutes",
-            result.get("hkcu_substitutes_deleted", []),
-        ),
-        (
-            "HKCU\\Control Panel\\International\\User Profile",
-            result.get("hkcu_intl_deleted", []),
-        ),
-        ("HKCU\\Software\\Microsoft\\CTF", result.get("hkcu_ctf_deleted", [])),
-        (
-            "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\SettingSync\\Namespace\\Language",
-            result.get("hkcu_settingsync_deleted", []),
-        ),
-        (
-            "HKU\\.DEFAULT\\Keyboard Layout\\Preload",
-            result.get("hku_default_deleted", []),
-        ),
-        ("CTF profiles", result.get("ctf_profiles_deleted", [])),
-    ]:
-        if not deleted and result["admin_privileges"]:
-            # Если админ, а ветка не очищена — probable permission error
-            # Проверяем что ветка вообще существует и требовала очистки
-            pass  # У нас нет информации была ли ветка пропущена по причине прав
-
-    result["permission_errors"] = permission_errors
+    # Результат запуска ctfmon фиксируется в __exit__ контекстного менеджера
+    # (CtfmonSuspender) — служба уже запущена там, повторный вызов не нужен.
+    ctfmon_started = suspender.started
 
     if retry_total:
         result["retry_cleaned"] = retry_total
@@ -2047,15 +2014,33 @@ def plan_layout_removal(layout_id: str) -> dict[str, Any]:
 # CLI entry-point для ручного тестирования
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    import json
-    import sys
+    import argparse
 
-    if len(sys.argv) > 1:
-        klid = sys.argv[1]
+    from config import enable_sandbox
+
+    parser = argparse.ArgumentParser(
+        description="Keyboard Layout Cleaner — CLI для удаления раскладок клавиатуры."
+    )
+    parser.add_argument("klid", help="KLID раскладки, например 00000419")
+    parser.add_argument(
+        "--plan", action="store_true", help="dry-run: показать план без изменений"
+    )
+    parser.add_argument("--sandbox", action="store_true", help="работать в sandbox-режиме")
+    parser.add_argument("--json", action="store_true", help="вывести отчёт в JSON")
+    args = parser.parse_args()
+
+    if args.sandbox:
+        enable_sandbox()
+
+    report = plan_layout_removal(args.klid) if args.plan else delete_layout(args.klid)
+
+    if args.json:
+        import json as _json
+
+        print(_json.dumps(report, ensure_ascii=False, indent=2, default=str))  # noqa: T201
     else:
-        sys.exit(1)
-
-    report = delete_layout(klid)
+        for key, value in report.items():
+            print(f"{key}: {value}")  # noqa: T201
 
 # ---------------------------------------------------------------------------
 # --- Очистка ---

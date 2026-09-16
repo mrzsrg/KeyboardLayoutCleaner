@@ -774,8 +774,28 @@ def scan_keyboard_layouts() -> dict[str, list[dict[str, str]]]:
 # CLI entry-point для ручного тестирования
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
+    import argparse
+    import json as _json
+
+    from config import enable_sandbox
+
+    parser = argparse.ArgumentParser(
+        description="Сканировать реестр Windows на предмет раскладок клавиатуры."
+    )
+    parser.add_argument("--sandbox", action="store_true", help="сканировать sandbox-ключ")
+    parser.add_argument("--json", action="store_true", help="вывести результат в JSON")
+    args = parser.parse_args()
+
+    if args.sandbox:
+        enable_sandbox()
+
     layouts = scan_keyboard_layouts()
-    for klid in layouts:
-        name = _resolve_name(klid)
-        for _loc in layouts[klid]:
-            pass
+    if args.json:
+        print(_json.dumps(layouts, ensure_ascii=False, indent=2))  # noqa: T201
+    else:
+        for klid in sorted(layouts):
+            name = _resolve_name(klid)
+            locations = layouts[klid]
+            print(f"{klid}  {name}  ({len(locations)} мест)")  # noqa: T201
+            for loc in locations:
+                print(f"    {loc['path']}: {loc['value']}")  # noqa: T201

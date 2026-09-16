@@ -22,7 +22,10 @@ try:
 
     __version__ = _get_version("keyboard-layout-cleaner")
 except (ImportError, PackageNotFoundError):
-    __version__ = "1.0.1"
+    # Fallback для PyInstaller-сборки (метаданных пакета в onedir нет);
+    # держать синхронно с [project] version в pyproject.toml
+    # (инвариант: test_version_matches_pyproject).
+    __version__ = "1.0.3"
 
 # ---------------------------------------------------------------------------
 # Sandbox-константы

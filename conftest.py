@@ -132,6 +132,10 @@ class FakeWinreg:
         self.nodes.setdefault((root_key, path), {"v": {}, "kids": set()})
         return FakeKey(root_key, path)
 
+    # В реальном winreg CreateKey — упрощённый синоним CreateKeyEx (оба имени
+    # экспортируются); cleaner.disable/enable_language_sync вызывает CreateKey.
+    CreateKey = CreateKeyEx
+
     def DeleteKey(self, root, subkey_path):  # noqa: N802
         self.nodes.pop(
             (self._resolve(root, subkey_path)[0], self._resolve(root, subkey_path)[1]),

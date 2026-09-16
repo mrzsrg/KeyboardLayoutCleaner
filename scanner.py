@@ -775,7 +775,10 @@ def scan_keyboard_layouts() -> dict[str, list[dict[str, str]]]:
     _scan_hkcu_branches(_ensure_layout, _add_location)
     _scan_hklm_branches(_add_location)
     _scan_hku_branches(_add_location)
-    _scan_powershell_languages(layout_map, _ensure_layout)
+    if not is_sandbox_enabled():
+        # В sandbox PowerShell-источник не изолирован: Get-WinUserLanguageList
+        # вернул бы ЖИВОЙ список пользователя (мимо sandbox-ключа) — пропускаем.
+        _scan_powershell_languages(layout_map, _ensure_layout)
 
     # ------------------------------------------------------------------
     # Сортировка результатов по klid
@@ -798,17 +801,26 @@ if __name__ == "__main__":
     import argparse
     import json as _json
 
-    from config import enable_sandbox
-
     parser = argparse.ArgumentParser(
         description="Сканировать реестр Windows на предмет раскладок клавиатуры."
     )
-    parser.add_argument("--sandbox", action="store_true", help="сканировать sandbox-ключ")
+    parser.add_argument(
+        "--sandbox",
+        action="store_true",
+        help="сканировать sandbox-ключ (HKCU\\Software\\KeyboardCleanerTest) "
+        "вместо живого реестра",
+    )
     parser.add_argument("--json", action="store_true", help="вывести результат в JSON")
     args = parser.parse_args()
 
     if args.sandbox:
-        enable_sandbox()
+        # Ровно activate_sandbox(), а НЕ enable_sandbox():
+        # scan_keyboard_layouts() итерирует МОДУЛЬНЫЕ константы
+        # HKCU_BRANCHES/HKU_BRANCHES/_RECURSIVE_SCAN (см. _scan_hkcu_branches),
+        # которые подменяет только activate_sandbox(). enable_sandbox() ставил
+        # лишь флаг в config — CLI молча сканировал живой реестр вопреки
+        # --help. GUI не страдал: main() вызывает activate_sandbox().
+        activate_sandbox()
 
     layouts = scan_keyboard_layouts()
     if args.json:

@@ -1,0 +1,16 @@
+fix: audit round 2 — fixture leak, sandbox CLI isolation, sync unlock, dead code, CI auto-discovery
+
+- test_main_gui_extended: monkeypatch вместо прямых присваиваний — мок
+  kernel32/winreg больше не протекает в test_mutex_*/test_restart_integration
+- scanner CLI --sandbox: activate_sandbox() вместо enable_sandbox() (модульные
+  HKCU_BRANCHES/_RECURSIVE_SCAN не переключались); PowerShell-источник гейтируется
+  в sandbox (живой Get-WinUserLanguageList протекал в изолированный скан)
+- cleaner: enable_language_sync() — снятие галочки синхронизации реально пишет
+  SettingSync\Groups\Language\Enabled = 1; UI честно откатывает галочку при ошибке
+- CI: pytest -m "not live" вместо ручного списка файлов (test_mutex_is_elevate.py
+  теперь запускается); key name fix; опциональный шаг подписи WIN_CERT_* + verify
+- удалены мёртвые SystemTray/TreeviewLayoutList, трей-методы main.py (self.pid),
+  _restart_ctfmon; BUGFIX_PLAN.md (устаревшие метрики)
+- sign_exe: реальный /du, TSA https://timestamp.digicert.com; докстринги
+  backup_registry/delete_layout/__main__; ARCHITECTURE §4; mutex в coverage;
+  types-all убран; FakeWinreg: алиас CreateKey; тесты TestLanguageSync (3)

@@ -13,6 +13,23 @@
 - Регрессионный тест DWORD-пути `FeaturesToInstall`: в живом реестре значение хранится как `REG_DWORD 0x6ff`, а строка «000006ff» возникает лишь при рендеринге int в нормализаторе сканера; фильтр метаданных срабатывает по имени значения независимо от типа (`test_features_to_install_dword_not_klid`).
 - Инвариант-тесты `TestSourceCoverageInvariants`: состав `AFFECTED_BRANCHES` (ровно 6 источников), Admin-гвард только на `HKU\.DEFAULT`, каталог `HKLM Keyboard Layouts` никогда не является источником мутации, `_REPORT_FIELD` покрывает все ветки, рекурсивная очистка — только внутри HKCU-веток.
 
+### Исправлено
+- Тесты: автофикстура `test_main_gui_extended.py` больше не «протекает» в глобальное состояние — `ctypes.windll`, `ctypes.wintypes`, `winreg.OpenKeyEx/EnumValue` подменяются через `monkeypatch` с гарантированным откатом. Раньше мок `kernel32` переживал тесты и ломал `test_mutex_restart.py` / `test_restart_integration.py` / `test_elevation.py` при алфавитном порядке прогона; ручной список файлов в CI маскировал поломку.
+- CLI `python scanner.py --sandbox` теперь действительно переключает ветки: вызывается `activate_sandbox()` (подменяет модульные `HKCU_BRANCHES`/`HKU_BRANCHES`/`_RECURSIVE_SCAN`), а не только флаг `enable_sandbox()` — раньше молча сканировался живой реестр вопреки `--help`. Заодно закрыта протечка живых данных в sandbox: PowerShell-источник (`Get-WinUserLanguageList`, не изолируемый sandbox-ключом) при активной песочнице исключается из скана.
+- Снятие галочки блокировки облачной синхронизации теперь реально разблокирует: добавлен `cleaner.enable_language_sync()` (восстанавливает `SettingSync\Groups\Language\Enabled = 1`); при неудаче статус показывает причину, галочка возвращается в отмеченное состояние.
+- CI: юнит-джоба переведена с ручного списка файлов на `pytest -m "not live"` — новые тест-файлы попадают в пайплайн автоматически (`test_mutex_is_elevate.py` раньше вообще не запускался в CI); в комментарии live-джобы исправлено имя тестового ключа (`KeyboardCleanerTest`).
+- `sign_exe.py`: `/du` указывает на реальный репозиторий; TSA-сервер по умолчанию — `https://timestamp.digicert.com` (был `http://`); в CI `build-release` добавлен опциональный шаг подписи + верификации (активируется секретами `WIN_CERT_PFX`/`WIN_CERT_PASS`).
+- Докстринги: `backup_registry` (папка бэкапов — `<приложение>/backups`, а не `cwd`), `delete_layout` (в отчёте добавлены `klid`, `last_layout_guard`, `retry_cleaned`), `__main__.py` (запуск — `python .` / `python main.py`; `python -m keyboard-layout-cleaner` невозможен из-за дефиса в имени).
+- `pyproject.toml`: `mutex` добавлен в coverage `source` и `py-modules`; `.pre-commit-config.yaml`: убран архивный пакет `types-all` из mypy (не устанавливается в чистом окружении).
+- `conftest.FakeWinreg`: добавлен алиас `CreateKey = CreateKeyEx` (реальный winreg экспортирует оба имени) — нужен для тестов `disable/enable_language_sync`.
+
+### Изменено
+- `ARCHITECTURE.md` §4 «Структура проекта» актуализирована: добавлены mutex, winproc, sign_exe, `__main__`, scripts/, полный состав тестов и спека PyInstaller.
+
+### Удалено
+- Мёртвые полуфичи: `SystemTray` и `TreeviewLayoutList` в `gui_widgets.py` (нигде не инстанцировались; несуществующий путь иконки `assets/icon.ico`; две идентичные ветки в `_build_layout_name_from_klid`) и трей-методы `main.py` (`_show_window`/`_hide_window`/`quit_from_tray` — обращение к несуществующему `self.pid`); неиспользуемый `_restart_ctfmon` в cleaner.
+- Устаревший `BUGFIX_PLAN.md`: итоговая таблица противоречила фактическому зелёному состоянию (метрики от 2026-09-14); история исправлений — в CHANGELOG и git-истории.
+
 ## [1.0.1] — 2026-09-16
 
 ### Добавлено

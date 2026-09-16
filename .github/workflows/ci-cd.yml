@@ -53,8 +53,11 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements-dev.txt
       - name: Run unit tests with coverage
+        # Автоотбор вместо ручного списка файлов: -m "not live" гарантирует,
+        # что каждый новый тест-файл попадает в пайплайн по умолчанию
+        # (раньше test_mutex_is_elevate.py выпадал из прогона без сигнала).
         run: |
-          python -m pytest test_applog.py test_elevation.py test_mutex_restart.py test_restart_integration.py test_scanner.py test_main.py test_main_part1.py test_main_gui.py test_main_gui_extended.py test_i18n.py -v --tb=short --cov --cov-report=term-missing:skip-covered --cov-report=xml
+          python -m pytest -m "not live" -v --tb=short --cov --cov-report=term-missing:skip-covered --cov-report=xml
       - name: Upload coverage report
         if: always()
         uses: actions/upload-artifact@v4
@@ -79,7 +82,7 @@ jobs:
           pip install -r requirements-dev.txt
       - name: Run live sandbox tests
         # ВАЖНО: live-тесты проверяют работу с РЕАЛЬНЫМИ ветками (read-only,
-        # запись — только в тестовый ключ HKCU\Software\TestLayoutCleaner).
+        # запись — только в тестовый ключ HKCU\Software\KeyboardCleanerTest).
         # SANDBOX_MODE=1 исказил бы plan/delete API и сломал бы assertions.
         run: python -m pytest test_sandbox.py -m live -v --tb=short
 
@@ -118,6 +121,11 @@ jobs:
     # ("Resource not accessible by integration").
     permissions:
       contents: write
+    # Секреты прокидываются на уровень job: в if шага доступен только
+    # env-контекст, а не secrets.
+    env:
+      WIN_CERT_PFX: ${{ secrets.WIN_CERT_PFX }}
+      WIN_CERT_PASS: ${{ secrets.WIN_CERT_PASS }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -131,6 +139,16 @@ jobs:
           pip install -r requirements.txt pyinstaller
       - name: Build executable
         run: python -m PyInstaller keyboard_cleaner.spec --noconfirm --clean
+      - name: Sign executable (optional — only when cert secrets configured)
+        # Без сертификата SmartScreen будет предупреждать — это ожидаемо для
+        # Open Source без подписки. Шаг активируется автоматически, если в
+        # репозитории заданы секреты WIN_CERT_PFX (base64 .pfx) и WIN_CERT_PASS.
+        if: env.WIN_CERT_PFX != '' && env.WIN_CERT_PASS != ''
+        run: |
+          python -c "import base64, os; open('cert.pfx', 'wb').write(base64.b64decode(os.environ['WIN_CERT_PFX']))"
+          python sign_exe.py --exe "dist\KeyboardLayoutCleaner\KeyboardLayoutCleaner.exe" --pfx cert.pfx --pfx-pass "$env:WIN_CERT_PASS" --tsa-url https://timestamp.digicert.com
+          python sign_exe.py --exe "dist\KeyboardLayoutCleaner\KeyboardLayoutCleaner.exe" --verify
+          Remove-Item cert.pfx
       - name: Create ZIP archive
         run: |
           $tag = "${{ github.event.release.tag_name }}".TrimStart("v")

@@ -1039,5 +1039,61 @@ class TestVersion:
         assert m.group(1) == config.__version__
 
 
+class TestLanguageSync:
+    """cleaner.disable/enable_language_sync — парные операции на FakeWinreg."""
+
+    KEY = (
+        r"Software\Microsoft\Windows\CurrentVersion"
+        r"\SettingSync\Groups\Language"
+    )
+
+    def test_enable_restores_blocked_value(self, fake_winreg):
+        """Снятие блокировки реально пишет Enabled = 1 (REG_DWORD).
+
+        Раньше у галочки была только «включающая» сторона: снятие меняло
+        лишь текст статуса, а ключ реестра оставался 0.
+        """
+        with _install_fake_winreg(fake_winreg):
+            ok, _ = cleaner.disable_language_sync()
+            assert ok
+            assert cleaner._is_language_sync_blocked()
+
+            ok, detail = cleaner.enable_language_sync()
+            assert ok, detail
+            assert not cleaner._is_language_sync_blocked()
+
+            with cleaner.winreg.OpenKey(
+                cleaner.winreg.HKEY_CURRENT_USER, self.KEY
+            ) as key:
+                val, vtype = cleaner.winreg.QueryValueEx(key, "Enabled")
+            assert vtype == cleaner.winreg.REG_DWORD
+            assert val == 1
+
+    def test_enable_is_noop_when_not_blocked(self, fake_winreg):
+        """enable при незаблокированной синхронизации — no-op (не пишет 1)."""
+        with _install_fake_winreg(fake_winreg):
+            ok, detail = cleaner.enable_language_sync()
+        assert ok
+        assert "уже" in detail.lower()
+
+
+    def test_sandbox_scan_excludes_powershell_source(self, fake_winreg):
+        """В sandbox PowerShell-источник исключён — изоляция полная.
+
+        Get-WinUserLanguageList опрашивает ЖИВОЙ список пользователя и
+        не читается из sandbox-ключа; без гейта sandbox-скан показывал
+        реальные раскладки (протечка живых данных).
+        """
+        with _install_fake_winreg(fake_winreg):
+            scanner.activate_sandbox()
+            with mock.patch.object(
+                scanner, "_get_language_list_from_powershell"
+            ) as ps_get:
+                layouts = scanner.scan_keyboard_layouts()
+        scanner.deactivate_sandbox()
+        ps_get.assert_not_called()
+        assert layouts == {}
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

@@ -303,7 +303,8 @@ def backup_registry(
         Пример:
         ``[{"root": "HKCU", "subkey": "Keyboard Layout\\Preload"}, ...]``
     backup_dir : str, optional
-        Папка для сохранения бэкапа (по умолчанию — ``cwd``).
+        Папка для сохранения бэкапа. По умолчанию — ``<папка приложения>/backups``
+        (портативный режим), а НЕ ``cwd``.
     report : dict, optional
         Если передан словарь — в него записываются списки:
         ``exported`` — успешно экспортированные ветки,
@@ -1296,11 +1297,6 @@ class CtfmonSuspender:
         self.started = _start_ctfmon()
 
 
-def _restart_ctfmon() -> bool:
-    """Перезапустить службу ввода (стоп + старт) — для обратной совместимости."""
-    return _start_ctfmon()
-
-
 def _backup_language_list(backup_file: Path) -> str:
     """
     Экспортировать текущий список языков в JSON рядом с .reg-бэкапом.
@@ -1497,6 +1493,43 @@ def disable_language_sync() -> tuple[bool, str]:
         return False, "Доступ запрещён (групповая политика / права администратора)"
     except OSError as exc:
         logger.warning("Не удалось отключить синхронизацию языков: %s", exc)
+        return False, f"Ошибка: {exc}"
+
+
+def enable_language_sync() -> tuple[bool, str]:
+    """
+    Разблокировать синхронизацию языковых параметров с облаком Microsoft.
+
+    Обратная операция к :func:`disable_language_sync`: восстанавливает
+    ``SettingSync\\Groups\\Language\\Enabled = 1`` (REG_DWORD).
+
+    Returns
+    -------
+    tuple[bool, str]
+        (успех, детализированное описание результата/ошибки)
+    """
+    key_path = r"Software\Microsoft\Windows\CurrentVersion\SettingSync\Groups\Language"
+    # Проверяем текущее состояние перед записью
+    if not _is_language_sync_blocked():
+        logger.info("Синхронизация языков не заблокирована — пропускаем запись")
+        return True, "Уже включена"
+
+    try:
+        with winreg.CreateKey(winreg.HKEY_CURRENT_USER, key_path) as key:
+            # 1 = Включить синхронизацию языков (значение по умолчанию)
+            winreg.SetValueEx(key, "Enabled", 0, winreg.REG_DWORD, 1)
+        logger.info("Синхронизация языковых параметров с облаком восстановлена.")
+        return True, "Включена (Enabled = 1)"
+    except PermissionError as exc:
+        # Ветка заблокирована системным администратором через групповую политику
+        logger.warning(
+            "Не удалось включить синхронизацию языков: доступ запрещён "
+            "(возможно, заблокировано групповой политикой): %s",
+            exc,
+        )
+        return False, "Доступ запрещён (групповая политика / права администратора)"
+    except OSError as exc:
+        logger.warning("Не удалось включить синхронизацию языков: %s", exc)
         return False, f"Ошибка: {exc}"
 
 
@@ -1819,6 +1852,7 @@ def delete_layout(layout_id: str) -> dict[str, Any]:
 
             {
                 "success": bool,
+                "klid": str,               # нормализованный KLID (lowercase)
                 "backup_path": str,        # путь к созданному бэкапу
                 "backup_ok": bool,         # False = удаление отменено
                 "backup_error": str,       # причина провала бэкапа
@@ -1834,6 +1868,8 @@ def delete_layout(layout_id: str) -> dict[str, Any]:
                 "langlist_backup_path": str,
                 "ctf_profiles_deleted": list[str],
                 "ctfmon_restarted": bool | None,
+                "last_layout_guard": bool,  # сработала защита последней раскладки
+                "retry_cleaned": int,       # сколько повторных чисток CTF сделано
                 "admin_privileges": bool,
                 "language_sync_blocked": bool,
                 "language_sync_block_detail": str,

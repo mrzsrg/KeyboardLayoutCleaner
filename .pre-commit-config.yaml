@@ -16,8 +16,8 @@ repos:
     rev: v1.15.0
     hooks:
       - id: mypy
-        additional_dependencies:
-          - types-all
+        # types-all архивирован (не ставится в чистом окружении); сторонних
+        # type-stub'ов проекту не требуется — customtkinter/pywin32 нетипизированы.
         exclude: ^(test_|scripts/)
 
   - repo: https://github.com/pre-commit/pre-commit-hooks

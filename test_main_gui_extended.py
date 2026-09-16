@@ -92,20 +92,29 @@ def _make_ctk():  # noqa: C901 - тестовый мок customtkinter: наме
 
 
 @pytest.fixture(autouse=True)
-def _mock_dependencies():
-    sys.modules["_ctypes"] = mock.MagicMock()
-    ctypes.windll = mock.MagicMock()
-    ctypes.wintypes = types.SimpleNamespace()
+def _mock_dependencies(monkeypatch):
+    """Подменить нативные зависимости GUI на моки — С ГАРАНТИРОВАННЫМ ОТКАТОМ.
+
+    Раньше ctypes.windll / winreg.OpenKeyEx заменялись прямым присваиванием,
+    а teardown чистил только sys.modules — мок kernel32 «протекал» во все
+    последующие тесты и ломал модули, работающие с настоящим kernel32
+    (test_mutex_restart.py, test_restart_integration.py, test_elevation.py)
+    при алфавитном порядке прогона. Ручной список файлов в CI маскировал
+    поломку. monkeypatch восстанавливает оригиналы после каждого теста.
+    """
+    monkeypatch.setitem(sys.modules, "_ctypes", mock.MagicMock())
+    monkeypatch.setattr(ctypes, "windll", mock.MagicMock())
+    monkeypatch.setattr(ctypes, "wintypes", types.SimpleNamespace())
     import winreg as _wr
 
-    _wr.OpenKeyEx = mock.MagicMock(return_value=mock.MagicMock())
-    _wr.EnumValue = mock.MagicMock(side_effect=FileNotFoundError)
+    monkeypatch.setattr(
+        _wr, "OpenKeyEx", mock.MagicMock(return_value=mock.MagicMock())
+    )
+    monkeypatch.setattr(
+        _wr, "EnumValue", mock.MagicMock(side_effect=FileNotFoundError)
+    )
     ctk = _make_ctk()
-    sys.modules["customtkinter"] = ctk
-    yield
-    for mod in list(sys.modules.keys()):
-        if mod in ("_ctypes", "customtkinter"):
-            del sys.modules[mod]
+    monkeypatch.setitem(sys.modules, "customtkinter", ctk)
 
 
 @pytest.fixture

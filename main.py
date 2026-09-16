@@ -219,6 +219,7 @@ from applog import get_app_dir, get_logger  # noqa: E402
 from cleaner import (  # noqa: E402
     delete_layout,
     disable_language_sync,
+    enable_language_sync,
     get_backup_dir,
     is_admin,
     list_backups,
@@ -391,33 +392,6 @@ class KeyboardLayoutCleaner(ctk.CTk):
         self._build_ui()
         # Цикл опроса очереди результатов (UI-поток)
         self.after(POLL_INTERVAL_MS, self._process_ui_queue)
-
-    # ------------------------------------------------------------------
-    # Системный трей (system tray)
-    # ------------------------------------------------------------------
-
-    def _show_window(self) -> None:
-        """Показать главное окно из трея."""
-        try:
-            self.deiconify()
-            self.lift()
-            self.focus_force()
-            logger.info("[PID=%d] Окно показано из трея", self.pid)
-        except Exception as exc:  # noqa: BLE001
-            logger.debug("Ошибка показа окна из трея: %s", exc)
-
-    def _hide_window(self) -> None:
-        """Скрыть главное окно в трей."""
-        try:
-            self.withdraw()
-            logger.info("[PID=%d] Окно скрыто в трей", self.pid)
-        except Exception as exc:  # noqa: BLE001
-            logger.debug("Ошибка скрытия окна: %s", exc)
-
-    def quit_from_tray(self) -> None:
-        """Закрыть приложение (вызывается из системного трея)."""
-        self._release_mutex_and_exit()
-        self.destroy()
 
     # ------------------------------------------------------------------
     # UI Layout
@@ -1584,7 +1558,17 @@ class KeyboardLayoutCleaner(ctk.CTk):
                 self._set_status(detail)
                 self.block_sync_checkbox.deselect()
         else:
-            self._set_status(_t("status_sync_unblocked"))
+            # Снятие галочки = реальная разблокировка (Enabled = 1).
+            # Раньше ветка только меняла текст статуса, хотя ключ реестра
+            # оставался 0 — UI врал о состоянии синхронизации.
+            ok, detail = enable_language_sync()
+            if ok:
+                self._set_status(_t("status_sync_unblocked"))
+            else:
+                # Не разблокировали — честно показываем причину и
+                # возвращаем галочку: состояние реестра не изменилось.
+                self._set_status(detail)
+                self.block_sync_checkbox.select()
 
     # ------------------------------------------------------------------
     # Восстановление из бэкапа

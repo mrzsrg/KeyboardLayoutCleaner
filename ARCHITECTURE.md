@@ -54,20 +54,24 @@
 
 ```
 keyboard-layout-cleaner/
-├── config.py          # Центральные константы (SANDBOX_ROOT, SANDBOX_MODE)
-├── main.py            # GUI-приложение (CustomTkinter)
-├── scanner.py         # Модуль сканирования реестра
-├── cleaner.py         # Модуль бэкапа и удаления
-├── gui_widgets.py     # Переиспользуемые GUI-компоненты
-├── i18n.py            # Локализация
-├── ui_theme.py        # Темы оформления
-├── applog.py          # Настройка журналирования
-├── locales/           # Файлы переводов (en, ru, es, de, zh, pt)
-├── conftest.py        # Фикстуры pytest
-├── test_scanner.py    # Unit-тесты сканера и чистильщика
-├── test_sandbox.py    # Live-тесты в sandbox-режиме
-├── test_elevation.py  # Тесты механизма UAC
-└── ARCHITECTURE.md    # Этот файл
+├── main.py              # GUI-приложение (CustomTkinter), точка входа
+├── __main__.py          # Запуск каталога: python .
+├── config.py            # Центральные константы (SANDBOX_ROOT, SANDBOX_MODE, версия)
+├── scanner.py           # Сканер реестра (+ CLI: --sandbox / --json)
+├── cleaner.py           # Бэкап и удаление (+ CLI: --plan / --json / --sandbox)
+├── mutex.py             # Мьютекс защиты от параллельных запусков
+├── winproc.py           # Запуск процессов/PowerShell (run_hidden)
+├── gui_widgets.py       # Переиспользуемые GUI-компоненты (AdminBanner/ActionButtons/StatusBar)
+├── ui_theme.py          # Темы оформления
+├── i18n.py              # Локализация
+├── applog.py            # Настройка журналирования
+├── sign_exe.py          # Подпись .exe через signtool (опционально в CI)
+├── keyboard_cleaner.spec  # Спека PyInstaller
+├── locales/             # Файлы переводов (en, ru, es, de, zh, pt)
+├── scripts/             # PowerShell-скрипты (список языков, бэкап/восстановление)
+├── conftest.py          # Фикстуры pytest (FakeWinreg и др.)
+├── test_*.py            # Юнит-тесты (FakeWinreg/mock) и live-тесты (sandbox-ключ)
+└── ARCHITECTURE.md      # Этот файл
 ```
 
 ## 5. Безопасность

@@ -56,6 +56,7 @@ markers = [
 [tool.coverage.run]
 source = [
     "main",
+    "mutex",
     "scanner",
     "cleaner",
     "config",
@@ -72,6 +73,7 @@ omit = ["*/conftest.py", "*/test_*.py", "*/__init__.py"]
 # ``pip install .`` не собирал в пакет тесты/локали/assets.
 py-modules = [
     "main",
+    "mutex",
     "scanner",
     "cleaner",
     "config",

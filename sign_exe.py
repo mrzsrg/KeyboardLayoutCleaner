@@ -8,14 +8,14 @@ sign_exe.py — Подпись exe-файла через signtool.exe (Windows S
 Запуск:
   python sign_exe.py --exe path/to/exe --pfx path/to.pfx --pfx-pass password
   python sign_exe.py --exe path/to/exe --ests
-  python sign_exe.py --exe path/to/exe --pfx path/to.pfx --pfx-pass password --tsa-url http://timestamp.server.com
+  python sign_exe.py --exe path/to/exe --pfx path/to.pfx --pfx-pass password --tsa-url https://timestamp.digicert.com
 
 Параметры:
   --exe        путь к exe-файлу
   --pfx        путь к .pfx файлу (обязательно, если не --ests)
   --pfx-pass   пароль от .pfx
   --ests       использовать Microsoft Authenticode ESTS (timestamp без сертификата)
-  --tsa-url    URL сервера отметки времени (по умолчанию: http://timestamp.sectigo.com)
+  --tsa-url    URL сервера отметки времени (по умолчанию: https://timestamp.digicert.com)
   --verbose    подробный вывод
 
 Требования:
@@ -117,7 +117,7 @@ def sign_with_ests(
         "/d",
         "Keyboard Layout Cleaner",
         "/du",
-        "https://github.com/user/keyboard-layout-cleaner",
+        "https://github.com/mrzsrg/KeyboardLayoutCleaner",
     ]
     cmd.append(str(exe_path))
     logger.info("Подпись через ESTS: %s", exe_path)
@@ -157,8 +157,8 @@ def main() -> None:
     )
     parser.add_argument(
         "--tsa-url",
-        default="http://timestamp.sectigo.com",
-        help="URL сервера отметки времени (default: http://timestamp.sectigo.com)",
+        default="https://timestamp.digicert.com",
+        help="URL сервера отметки времени (default: https://timestamp.digicert.com)",
     )
     parser.add_argument(
         "--verify", action="store_true", help="Только проверить подпись"

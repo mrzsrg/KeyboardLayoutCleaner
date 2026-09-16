@@ -13,6 +13,12 @@
 - Сканер: валидация KLID (`_KLID_RE`) перенесена внутрь `_get_preload_keys`/`_scan_substitutes` (defense-in-depth) — мусорные значения реестра («1», «ru-RU») не покидают парсер независимо от проверок вызывающего кода.
 - Сканер: при недоступности `Get-WinUserLanguageList` («термин не распознан» — урезанные сборки Windows/Server) в лог пишется понятная рекомендация вместо сырого stderr.
 
+### Добавлено
+- `config.TIMEOUTS`: настраиваемые таймауты для всех долгоиграющих операций (`reg_export`, `reg_import`, `reg_import_uac`, `powershell_*`, `ctfmon_control`, `mutex_wait`) — позволяет тонко настраивать ожидание без изменения кода; все значения имеют документированные обоснования в комменте.
+- `cleaner._check_reg_backup_file()`: валидация .reg-файла бэкапа перед восстановлением — проверка размера (100 Б — 50 МБ), BOM, кодировки UTF-16 LE, заголовка «Windows Registry Editor Version 5.00»; отсекает повреждённые/пустые/некорректные бэкапы.
+- `cleaner._system_info()`: собирает `windows_version`, `python_version`, `app_version` для логов и отчётности.
+- Сканер: hint проверки доступности PowerShell перед запуском скриптов — вывод понятной рекомендации в лог при недоступности `Get-WinUserLanguageList` (урезанные сборки Windows/Server).
+
 ## [1.0.3] — 2026-09-16
 
 ### Добавлено
@@ -110,5 +116,7 @@
 - CI/CD пайплайн (lint, test, build, release)
 - Полное покрытие тестами (unit + integration + live)
 
-[Unreleased]: https://
-[1.0.0]: https://
+[Unreleased]: https://github.com/mrzsrg/KeyboardLayoutCleaner/compare/v1.0.3...HEAD
+[1.0.3]: https://github.com/mrzsrg/KeyboardLayoutCleaner/releases/tag/v1.0.3
+[1.0.1]: https://github.com/mrzsrg/KeyboardLayoutCleaner/releases/tag/v1.0.1
+[1.0.0]: https://github.com/mrzsrg/KeyboardLayoutCleaner/releases/tag/v1.0.0

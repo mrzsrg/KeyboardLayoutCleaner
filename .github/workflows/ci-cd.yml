@@ -113,6 +113,11 @@ jobs:
     runs-on: windows-latest
     needs: [lint, test]
     if: github.event_name == 'release'
+    # GITHUB_TOKEN по умолчанию read-only: без contents: write
+    # softprops/action-gh-release не может загрузить ZIP-ассет
+    # ("Resource not accessible by integration").
+    permissions:
+      contents: write
     steps:
       - name: Checkout code
         uses: actions/checkout@v4

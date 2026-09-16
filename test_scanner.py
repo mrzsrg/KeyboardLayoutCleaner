@@ -315,6 +315,43 @@ class TestScanBranchRecursive:
             )
         assert any(v == "00000409" for _, v in found)
 
+    def test_features_to_install_metadata_not_klid(self, fake_winreg):
+        """FeaturesToInstall=000006ff — метаданные профиля, а НЕ раскладка.
+
+        Регрессия 000006ff: 8-hex токен в этом значении — битовая маска
+        feature-флагов; сканер не должен классифицировать его как KLID.
+        При этом настоящая раскладка рядом (InputMethodOverride) находится.
+        """
+        fake_winreg.set(
+            fake_winreg.HKEY_CURRENT_USER,
+            "T4\\en-US",
+            values={
+                "FeaturesToInstall": "000006ff",
+                "CachedLanguageName": "English (United States)",
+                "InputMethodOverride": "0809:00000809",
+            },
+        )
+        with _install_fake_winreg(fake_winreg):
+            found = scanner._scan_branch_recursive(
+                scanner.winreg.HKEY_CURRENT_USER, "T4"
+            )
+        klids = [v for _, v in found]
+        assert "000006ff" not in klids
+        assert "00000809" in klids
+
+    def test_windows_override_tag_metadata_not_klid(self, fake_winreg):
+        """WindowsOverride — это тег языка интерфейса, а не раскладка."""
+        fake_winreg.set(
+            fake_winreg.HKEY_CURRENT_USER,
+            "T5\\Languages",
+            values={"WindowsOverride": "en-US", "ShowCasing": "0"},
+        )
+        with _install_fake_winreg(fake_winreg):
+            found = scanner._scan_branch_recursive(
+                scanner.winreg.HKEY_CURRENT_USER, "T5"
+            )
+        assert found == []
+
 
 class TestGetLayoutName:
     """get_layout_name / _resolve_name."""
@@ -494,6 +531,20 @@ class TestCleanerBasic:
     def test_klid_to_tags(self):
         tags = cleaner._klid_to_tags("00000409")
         assert "en-US" in tags
+
+    def test_branch_value_matches_skips_metadata_names(self):
+        """FeaturesToInstall — метаданные: не матчим их как KLID (регрессия 000006ff)."""
+        variants = {"000006ff"}
+        assert not cleaner._branch_value_matches(
+            "FeaturesToInstall", "000006ff", variants, "preload"
+        )
+        assert not cleaner._branch_value_matches(
+            "windowsoverride", "en-US", {"00000409"}, "preload"
+        )
+        # А вот настоящий layout-источник матчится как раньше
+        assert cleaner._branch_value_matches(
+            "KeyboardLayoutPreload", "000006ff", variants, "preload"
+        )
 
 
 class TestSubtreeEmpty:

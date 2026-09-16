@@ -24,7 +24,7 @@ import applog
 import scanner
 from applog import get_app_dir
 from config import _SANDBOX_ROOT, disable_sandbox, enable_sandbox, is_sandbox_enabled
-from scanner import LAYOUT_MAP, _get_preload_keys
+from scanner import _METADATA_VALUE_NAMES, LAYOUT_MAP, _get_preload_keys
 from winproc import run_hidden
 
 # ---------------------------------------------------------------------------
@@ -623,6 +623,10 @@ def _branch_value_matches(
     name: str, val: str, variants: set[str], match_mode: str
 ) -> bool:
     """Совпадает ли значение реестра с одним из представлений KLID."""
+    # Метаданные языкового профиля (FeaturesToInstall="000006ff" и пр.) не
+    # являются раскладками — пропускаем их по имени значения (см. scanner).
+    if str(name).strip().lower() in _METADATA_VALUE_NAMES:
+        return False
     val_l = val.strip().lower()
     # Формат "0409:00000409" (LANGID:KLID) из User Profile/CTF —
     # сравниваем ВТОРУЮ часть (KLID), а не всю строку.

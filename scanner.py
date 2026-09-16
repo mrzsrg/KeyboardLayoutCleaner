@@ -494,6 +494,13 @@ def _scan_branch_recursive(
                         name, val, _ = winreg.EnumValue(key, idx)
                     except OSError:
                         break
+                    idx += 1
+                    # Метаданные языкового профиля (FeaturesToInstall и пр.)
+                    # НЕ являются раскладками, даже если их содержимое — 8 hex
+                    # (регрессия 000006ff: битовая маска флагов ошибочно
+                    # классифицировалась как KLID-кандидат).
+                    if str(name).lower() in _METADATA_VALUE_NAMES:
+                        continue
                     raw = str(val).strip()
                     klid = ""
                     tip_match = _TIP_KLID_RE.match(raw)
@@ -515,7 +522,6 @@ def _scan_branch_recursive(
                     if klid:
                         rel = key_path[len(subkey_path) :].lstrip("\\")
                         found.append((f"{rel}\\{name}" if rel else name, klid))
-                    idx += 1
                 sub_idx = 0
                 while True:
                     try:
@@ -575,6 +581,19 @@ _TIP_KLID_RE = re.compile(r"^[0-9A-Fa-f]{4}:([0-9A-Fa-f]{8})$")
 # Подлинный KLID — ровно 8 HEX-символов (отсеивает мусорные значения
 # вида "1" или "ru-RU en-GB", встречающиеся в User Profile / CTF)
 _KLID_RE = re.compile(r"^[0-9a-f]{8}$")
+
+# Имена значений-МЕТАДАННЫХ языкового профиля — НЕ раскладки, даже если
+# содержимое выглядит как KLID. Классический пример:
+#   ...\User Profile\en-US\FeaturesToInstall = 000006ff
+# — это битовая маска feature-флагов, а не KLID; до этой правки сканер
+# ошибочно показывал "Layout (000006ff)". Имена значений реестра не
+# чувствительны к регистру — сравниваем в lowercase.
+_METADATA_VALUE_NAMES = frozenset({
+    "featurestoinstall",   # битовая маска флагов (напр. "000006ff")
+    "cachedlanguagename",  # отображаемое имя языка
+    "showcasing",          # опции отображения (Languages)
+    "windowsoverride",     # переопределение языка интерфейса (тег, не раскладка)
+})
 
 
 def _parse_language_entries(stdout: str) -> list[dict[str, Any]]:

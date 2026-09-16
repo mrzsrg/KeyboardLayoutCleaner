@@ -18,6 +18,8 @@ from PyInstaller.utils.hooks import collect_data_files
 datas = collect_data_files("customtkinter")
 # Файлы локализации locales/<код>.json — рядом с кодом в _internal
 datas += [("locales", "locales")]
+# PowerShell-скрипты scripts/*.ps1 — нужны в рантайме (cleaner._PS_DIR)
+datas += [("scripts", "scripts")]
 # Иконка приложения
 datas += [("assets/keyboard_cleaner.ico", "assets")]
 

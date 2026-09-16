@@ -813,12 +813,19 @@ class TestRestoreLanguageList:
                 }
             ]
         )
-        captured, fake_run = self._capture_success_run()
+        captured = {}
+
+        def fake_run(cmd, **kw):
+            # Читаем содержимое временного JSON прямо во время вызова:
+            # после возврата restore_language_list он уже удаляется.
+            captured["cmd"] = cmd
+            captured["content"] = Path(cmd[-1]).read_text(encoding="utf-8")
+            return _proc(returncode=0, stdout="SUCCESS")
+
         with mock.patch.object(cleaner, "run_hidden", fake_run):
             assert cleaner.restore_language_list(jp) is True
         # Во временный JSON для PS1 попадает первый непустой тег и список раскладок.
-        tmp_json = Path(captured["cmd"][-1])
-        written = json.loads(tmp_json.read_text(encoding="utf-8"))
+        written = json.loads(captured["content"])
         assert written == [["ru", ["0419:00000419"]]]
 
     def test_empty_list_language_tag_is_skipped(self):

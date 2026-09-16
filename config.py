@@ -41,8 +41,10 @@ class _SandboxModeProxy:
         with _sandbox_lock:
             return bool(_SANDBOX_MODE)
 
-    def __repr__(self) -> str:  # pragma: no cover
-        return f"SandboxModeProxy({self})"
+    def __repr__(self) -> str:
+        # Не ссылаемся на self внутри f-string: str(self) -> __repr__ ->
+        # бесконечная рекурсия. Показываем актуальное состояние флага.
+        return f"<SandboxModeProxy active={is_sandbox_enabled()}>"
 
 
 # Публичная переменная для обратной совместимости (только для чтения — используйте

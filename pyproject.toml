@@ -34,8 +34,13 @@ dev = [
     "pyinstaller>=6.0",
 ]
 
-[project.scripts]
-keyboard-layout-cleaner = "main:main"
+# ВАЖНО: `pip install .` НЕ является поддерживаемым способом установки.
+# Приложение — портативная GUI-утилита для Windows; данные (locales/*.json,
+# scripts/*.ps1, assets/) не упаковываются в site-packages при flat-сборке,
+# поэтому консольный entry-point был бы неработоспособен. Поддерживаемые
+# способы запуска: из исходников (python main.py) или собранный .exe.
+# [project.scripts]
+# keyboard-layout-cleaner = "main:main"
 
 [tool.pytest.ini_options]
 testpaths = ["."]

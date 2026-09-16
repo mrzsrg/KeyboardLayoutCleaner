@@ -5,7 +5,9 @@
 # Запускается из cleaner.py через subprocess.run с параметром:
 #   -OutputPath <путь к .json файлу>
 #
-# Вывод (в stdout): JSON-массив языков (всегда array, даже для 1 языка).
+# Вывод: при -OutputPath JSON пишется строго в файл (не зависит от чистоты
+# stdout), а в stdout выводится маркер "SUCCESS". Без -OutputPath (совместимый
+# режим) JSON выводится в stdout.
 # ВАЖНО: ConvertTo-Json через pipe разворачивает одиночный элемент в голый
 # объект. Поэтому используется -InputObject: он сохраняет массив всегда.
 
@@ -26,4 +28,18 @@ $out = @($langs | ForEach-Object {
 })
 
 # -InputObject сохраняет форму массива для любого числа элементов (0/1/N)
-ConvertTo-Json -InputObject $out -Depth 4 -Compress
+$json = ConvertTo-Json -InputObject $out -Depth 4 -Compress
+
+if ($OutputPath) {
+    # Пишем строго в файл; UTF-8 без BOM (Python читает как utf-8).
+    [System.IO.File]::WriteAllText(
+        $OutputPath,
+        $json,
+        [System.Text.UTF8Encoding]::new($false)
+    )
+    Write-Output "SUCCESS"
+    exit 0
+}
+
+# Без -OutputPath — совместимый режим: JSON в stdout
+Write-Output $json

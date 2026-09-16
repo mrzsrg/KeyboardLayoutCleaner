@@ -113,8 +113,13 @@ def test_set_language_unknown_fallback_to_en() -> None:
         assert i18n.current_lang == i18n.FALLBACK
 
 
-def test_set_language_invalid_json() -> None:
-    """Если файл локали не JSON-объект — ValueError, но fallback сохраняется."""
+def test_set_language_base_invalid_falls_back_gracefully() -> None:
+    """Повреждённый/отсутствующий базовый en.json НЕ роняет приложение.
+
+    Раньше _load_file(FALLBACK) бросал исключение на старте. По замечанию
+    аудита чтение базы обёрнуто в try-except: при сбое используется пустой
+    словарь и fallback на en (fmt() вернёт сам ключ).
+    """
     logger = logging.getLogger("layout_cleaner")
     logger.handlers = []
     logger.setLevel(logging.NOTSET)
@@ -123,11 +128,9 @@ def test_set_language_invalid_json() -> None:
     def bad_load(_lang: str) -> dict[str, str]:
         raise ValueError("root is not an object")
 
-    with (
-        patch.object(i18n, "_load_file", side_effect=bad_load),
-        pytest.raises(ValueError, match="root is not an object"),
-    ):
-        i18n.set_language("ru")
+    with patch.object(i18n, "_load_file", side_effect=bad_load):
+        assert i18n.set_language("ru") == i18n.FALLBACK
+        assert i18n.current_lang == i18n.FALLBACK
 
 
 def test_set_language_file_not_found_logs_warning() -> None:

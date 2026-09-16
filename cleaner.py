@@ -12,6 +12,7 @@ import ctypes
 import datetime
 import json
 import logging
+import os
 import re
 import subprocess
 import tempfile
@@ -1281,10 +1282,16 @@ def _backup_language_list(backup_file: Path) -> str:
             (result.stderr or "").strip()[:200],
         )
         return ""
-    try:
-        json_file.write_text(result.stdout or "[]", encoding="utf-8")
-    except OSError as exc:
-        logger.warning("Не удалось записать %s: %s", json_file, exc)
+    if "SUCCESS" not in (result.stdout or ""):
+        logger.warning(
+            "Экспорт списка языков: PS-скрипт не сообщил об успехе (stdout=%r)",
+            (result.stdout or "")[:200],
+        )
+        return ""
+    # JSON пишет сам PS-скрипт в -OutputPath; читаем файл напрямую —
+    # не зависим от чистоты stdout (предупреждения PowerShell не сломают парсинг).
+    if not json_file.is_file():
+        logger.warning("PS-скрипт не создал файл %s", json_file)
         return ""
     logger.info("Список языков сохранён: %s", json_file)
     return str(json_file)
@@ -1325,10 +1332,13 @@ def restore_language_list(json_path: str | Path) -> bool:
         logger.warning("В %s нет корректных записей языков", path)
         return False
 
-    # Пишем JSON-бэкап в временный файл для PS1-скрипта
+    # Пишем JSON-бэкап во временный файл для PS1-скрипта.
+    # Используем безопасный mkstemp (не mktemp — TOCTOU / Bandit B306).
     import tempfile
 
-    tmp_json = Path(tempfile.mktemp(suffix=".json"))
+    fd, tmp_name = tempfile.mkstemp(suffix=".json", prefix="klc_restore_")
+    os.close(fd)
+    tmp_json = Path(tmp_name)
     try:
         tmp_json.write_text(json.dumps(entries), encoding="utf-8")
         script_path = _PS_DIR / "layout_cleaner_restore.ps1"
@@ -1350,6 +1360,9 @@ def restore_language_list(json_path: str | Path) -> bool:
     except (subprocess.TimeoutExpired, OSError) as exc:
         logger.warning("Восстановление списка языков не удалось: %s", exc)
         return False
+    finally:
+        with contextlib.suppress(OSError):
+            tmp_json.unlink(missing_ok=True)
     ok = result.returncode == 0 and "SUCCESS" in (result.stdout or "")
     logger.info(
         "Восстановление списка языков: %s (%d языков)",

@@ -70,7 +70,19 @@ def set_language(lang: str) -> str:
     """
     global current_lang
     lang = lang if lang in SUPPORTED else FALLBACK
-    strings = _load_file(FALLBACK)
+    try:
+        strings = _load_file(FALLBACK)
+    except (OSError, ValueError) as exc:
+        # Повреждённая/отсутствующая папка locales не должна ронять приложение
+        # на старте — используем пустой словарь, а fmt() вернёт сам ключ.
+        logger.warning(
+            "Базовый словарь %s.json не загружен (%s) — строки будут показываться "
+            "как ключи",
+            FALLBACK,
+            exc,
+        )
+        strings = {}
+        lang = FALLBACK
     if lang != FALLBACK:
         try:
             strings.update(_load_file(lang))

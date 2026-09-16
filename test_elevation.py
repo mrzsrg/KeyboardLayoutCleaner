@@ -11,6 +11,7 @@ import importlib
 import os
 import sys
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -193,6 +194,25 @@ class TestSandboxConfig:
 
         monkeypatch.setenv("SANDBOX_MODE", "0")
         assert is_sandbox_enabled() is False
+
+    def test_sandbox_mode_proxy_repr_no_recursion(self):
+        """__repr__ не должен ссылаться на self (бесконечная рекурсия).
+
+        Регрессия: f"SandboxModeProxy({self})" -> str(self) -> __repr__ -> RecursionError.
+        """
+        import config
+
+        with patch.object(config, "_SANDBOX_MODE", False):
+            text = repr(config.SANDBOX_MODE)
+        assert text.startswith("<SandboxModeProxy")
+        assert "active=False" in text
+
+    def test_sandbox_mode_proxy_repr_reflects_state(self, monkeypatch):
+        import config
+
+        monkeypatch.setattr(config, "_SANDBOX_MODE", True)
+        assert "active=True" in repr(config.SANDBOX_MODE)
+        monkeypatch.setattr(config, "_SANDBOX_MODE", False)
 
 
 class TestModuleImports:

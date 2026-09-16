@@ -7,7 +7,9 @@
 
 ## [Unreleased]
 
-_Нет изменений._
+### Добавлено
+- `ARCHITECTURE.md`: матрица источников раскладок (SCAN / CORRELATE / MUTATE / DIAGNOSTIC ONLY) с ролями PRIMARY/SECONDARY/CATALOG; в список источников возвращён SettingSync (был в коде, но отсутствовал в документации).
+- Инвариант-тесты `TestSourceCoverageInvariants`: состав `AFFECTED_BRANCHES` (ровно 6 источников), Admin-гвард только на `HKU\.DEFAULT`, каталог `HKLM Keyboard Layouts` никогда не является источником мутации, `_REPORT_FIELD` покрывает все ветки, рекурсивная очистка — только внутри HKCU-веток.
 
 ## [1.0.1] — 2026-09-16
 

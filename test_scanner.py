@@ -510,6 +510,78 @@ class TestScannerConstants:
 
 
 # ---------------------------------------------------------------------------
+# TestSourceCoverageInvariants
+# ---------------------------------------------------------------------------
+class TestSourceCoverageInvariants:
+    """Инварианты матрицы источников (ARCHITECTURE.md, раздел 6).
+
+    Состав веток сканирования/мутации зафиксирован документом. Любое изменение
+    AFFECTED_BRANCHES / _REPORT_FIELD / _RECURSIVE_SUBKEYS должно сопровождаться
+    обновлением этих тестов и матрицы в документации — иначе CI упадёт.
+
+    Проверки ведутся по замороженной копии _ORIGINAL_AFFECTED_BRANCHES:
+    TestSandboxIsolation переключает глобальные списки, поэтому сравнивать
+    живые AFFECTED_BRANCHES без сброса песочницы нельзя (порядок тестов).
+    """
+
+    REAL_BRANCHES = scanner._ORIGINAL_AFFECTED_BRANCHES
+
+    def test_affected_branches_exact_composition(self):
+        """SCAN/MUTATE покрывают ровно 6 источников из матрицы — без лишних."""
+        expected = {
+            ("HKCU", "Keyboard Layout\\Preload"),
+            ("HKCU", "Keyboard Layout\\Substitutes"),
+            ("HKCU", "Control Panel\\International\\User Profile"),
+            ("HKCU", "Software\\Microsoft\\CTF"),
+            (
+                "HKCU",
+                "Software\\Microsoft\\Windows\\CurrentVersion"
+                "\\SettingSync\\Namespace\\Language",
+            ),
+            ("HKU", ".DEFAULT\\Keyboard Layout\\Preload"),
+        }
+        actual = {
+            (root, subkey) for root, subkey, _mode, _admin in self.REAL_BRANCHES
+        }
+        assert actual == expected
+
+    def test_only_hku_default_requires_admin(self):
+        """Admin-гвард обязана стоять только на HKU\\.DEFAULT."""
+        admin = {subkey for _r, subkey, _m, req in self.REAL_BRANCHES if req}
+        assert admin == {".DEFAULT\\Keyboard Layout\\Preload"}
+
+    def test_catalog_is_never_a_mutation_source(self):
+        """HKLM Keyboard Layouts — каталог имён: сканируем, но не мутируем."""
+        catalog = scanner._ORIGINAL_HKLM_BRANCHES
+        assert catalog == [
+            ("SYSTEM\\CurrentControlSet\\Control\\Keyboard Layouts", "preload")
+        ]
+        affected = {subkey for _r, subkey, _m, _a in self.REAL_BRANCHES}
+        assert catalog[0][0] not in affected
+
+    def test_report_field_covers_all_affected_branches(self):
+        """Каждая ветка матрицы имеет поле отчёта — и никаких лишних."""
+        pairs = {(root, subkey) for root, subkey, _m, _a in self.REAL_BRANCHES}
+        assert set(cleaner._REPORT_FIELD) == pairs
+
+    def test_recursive_subkeys_subset_of_hkcu_branches(self):
+        """Рекурсивная очистка — только внутри HKCU-веток матрицы."""
+        hkcu = {
+            subkey
+            for root, subkey, _m, _a in self.REAL_BRANCHES
+            if root == "HKCU"
+        }
+        assert hkcu >= cleaner._RECURSIVE_SUBKEYS
+
+    def test_dynamic_lists_restored_after_sandbox(self):
+        """После deactivate_sandbox живые списки совпадают с замороженными."""
+        scanner.deactivate_sandbox()
+        cleaner.deactivate_sandbox()
+        assert [tuple(b) for b in self.REAL_BRANCHES] == scanner.AFFECTED_BRANCHES
+        assert list(scanner._ORIGINAL_HKLM_BRANCHES) == scanner.HKLM_BRANCHES
+
+
+# ---------------------------------------------------------------------------
 # TestCleanerBasic
 # ---------------------------------------------------------------------------
 class TestCleanerBasic:

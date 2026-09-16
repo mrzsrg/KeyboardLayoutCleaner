@@ -20,6 +20,7 @@
   - `HKCU:\Keyboard Layout\Substitutes`
   - `HKCU:\Control Panel\International\User Profile`
   - `HKCU:\Software\Microsoft\CTF`
+  - `HKCU:\Software\Microsoft\Windows\CurrentVersion\SettingSync\Namespace\Language`
 - [x] Сканер системного реестра (`HKLM` и `HKU`):
   - `HKLM:\SYSTEM\CurrentControlSet\Control\Keyboard Layouts`
   - `HKEY_USERS\.DEFAULT\Keyboard Layout\Preload`
@@ -76,3 +77,29 @@ keyboard-layout-cleaner/
 - Бэкап создаётся ДО любых изменений реестра
 - Рекурсивная очистка TSF-профилей с остановкой ctfmon.exe
 - Точечная очистка User Profile (не удаляет весь профиль языка)
+
+## 6. Матрица источников раскладок
+
+Каждый источник реестра имеет строго определённую роль: **SCAN** (сканирование),
+**CORRELATE** (агрегация улик по KLID), **MUTATE** (очистка/удаление),
+**DIAGNOSTIC ONLY** (только справочная информация). Состав веток закреплён
+инвариант-тестами `TestSourceCoverageInvariants` (`test_scanner.py`):
+изменение матрицы требует одновременного обновления кода, тестов и этой таблицы.
+
+| Источник | SCAN | CORRELATE | MUTATE | Комментарий |
+|---|:-:|:-:|:-:|---|
+| `HKCU\Keyboard Layout\Preload` | ✅ | ✅ | ✅ | PRIMARY: прямые записи KLID |
+| `HKCU\Keyboard Layout\Substitutes` | ✅ | ✅ | ✅ | PRIMARY: подмены KLID→KLID |
+| `HKCU\Control Panel\International\User Profile` | ✅ | ✅ | ✅ | PRIMARY: BCP-47-теги + InputMethodOverride/KLP; значения-метаданные (`FeaturesToInstall` и др.) KLID-кандидатами не считаются (регрессия 000006ff) |
+| Языковой список (WinRT `Get-/Set-WinUserLanguageList`) | ✅ | ✅ | ⚠️ только через PowerShell-API | прямая мутация raw-реестра списка запрещена |
+| `HKCU\Software\Microsoft\CTF` | ✅ | ✅ | ✅ | SECONDARY: TSF-профили (decimal-HKL), очистка с остановкой ctfmon |
+| `HKCU\...\SettingSync\Namespace\Language` | ✅ | ✅ | ✅ | SECONDARY |
+| `HKU\.DEFAULT\Keyboard Layout\Preload` | ✅ | ✅ | ✅ (Admin) | SECONDARY: раскладка до логина |
+| `HKEY_USERS\<SID>` других пользователей | — | — | — | out of scope by design: hives могут быть не загружены, правки перетираются активной сессией |
+| `HKLM\SYSTEM\...\Keyboard Layouts` | ✅ | ✅ (имена) | ❌ никогда | CATALOG: наличие в каталоге ≠ установлена у пользователя; справочник имён `LAYOUT_MAP` |
+
+Роль CORRELATE выполняет агрегация `locations` по KLID (`scanner.py`) плюс
+эвристика фантома в UI (`main.py`): если все записи KLID найдены только в
+SECONDARY-источниках (нет в Preload / User Profile), раскладка — вероятный
+орфан. Каталог участвует в корреляции только именем раскладки и никогда —
+как доказательство её установки.

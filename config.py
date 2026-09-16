@@ -22,7 +22,7 @@ try:
 
     __version__ = _get_version("keyboard-layout-cleaner")
 except (ImportError, PackageNotFoundError):
-    __version__ = "1.0.0"
+    __version__ = "1.0.1"
 
 # ---------------------------------------------------------------------------
 # Sandbox-константы

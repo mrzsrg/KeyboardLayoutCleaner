@@ -5,7 +5,7 @@
 Формат основан на [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/),
 проект придерживается [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [1.0.4] — 2026-09-17
 
 ### Исправлено (по итогам ревью)
 - Cleaner: внедрён контекстный менеджер `CtfmonSuspender` для гарантированного перезапуска `ctfmon.exe` и `TextInputHost.exe` даже при исключениях во время очистки.
@@ -116,7 +116,8 @@
 - CI/CD пайплайн (lint, test, build, release)
 - Полное покрытие тестами (unit + integration + live)
 
-[Unreleased]: https://github.com/mrzsrg/KeyboardLayoutCleaner/compare/v1.0.3...HEAD
+[Unreleased]: https://github.com/mrzsrg/KeyboardLayoutCleaner/compare/v1.0.4...HEAD
+[1.0.4]: https://github.com/mrzsrg/KeyboardLayoutCleaner/releases/tag/v1.0.4
 [1.0.3]: https://github.com/mrzsrg/KeyboardLayoutCleaner/releases/tag/v1.0.3
 [1.0.1]: https://github.com/mrzsrg/KeyboardLayoutCleaner/releases/tag/v1.0.1
 [1.0.0]: https://github.com/mrzsrg/KeyboardLayoutCleaner/releases/tag/v1.0.0

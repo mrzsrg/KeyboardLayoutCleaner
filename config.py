@@ -25,7 +25,7 @@ except (ImportError, PackageNotFoundError):
     # Fallback для PyInstaller-сборки (метаданных пакета в onedir нет);
     # держать синхронно с [project] version в pyproject.toml
     # (инвариант: test_version_matches_pyproject).
-    __version__ = "1.0.3"
+    __version__ = "1.0.4"
 
 # ---------------------------------------------------------------------------
 # Таймауты внешних процессов (секунды)

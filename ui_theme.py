@@ -27,7 +27,7 @@ import logging
 import os
 from pathlib import Path
 
-import customtkinter as ctk
+import customtkinter as ctk  # type: ignore[import-untyped]
 
 import applog
 
@@ -458,7 +458,7 @@ def C(token: str) -> str:  # noqa: N802
     color = _T()[token]
     if token in TEXT_TOKENS:
         return scale_color(color, brightness_factor())
-    return color
+    return color  # type: ignore[no-any-return]
 
 
 def P(kind: str) -> tuple:  # noqa: N802
@@ -473,7 +473,7 @@ def N(token: str):  # noqa: N802
 
 def F(token: str) -> str:  # noqa: N802
     """Имя семейства шрифтов по токену ('font_ui' / 'font_mono')."""
-    return _T()[token]
+    return _T()[token]  # type: ignore[no-any-return]
 
 
 def body_font(size: int, weight: str | None = None, slant: str | None = None):

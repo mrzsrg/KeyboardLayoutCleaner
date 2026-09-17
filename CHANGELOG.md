@@ -7,6 +7,33 @@
 
 ## [1.0.4] — 2026-09-17
 
+## [1.0.5] — 2026-09-17
+
+### Исправлено
+- Мьютекс single-instance перенесён из `Global\` в `Local\`: независимый запуск в разных сессиях Windows. Требование `SeCreateGlobalPrivilege` для глобальных file-mapping объектов не относится к мьютексам; прежний отказ стандартной учётной записи не воспроизводился.
+- CJK-словарь PowerShell хранит голые KLID; ko-KR исправлен на `00000412`, в соответствии со сканером.
+- Применение очистки языков: `.ToArray()` вместо `@($kept)`, вызывавшего `Argument types do not match` для `List[object]`.
+- Галочка блокировки облачной синхронизации при создании окна отражает реестр. Регрессионный тест проверяет оба состояния.
+- `RtlGetVersion`: один аргумент, явные `argtypes`/`restype`, корректный комментарий NTSTATUS.
+- `FakeWinreg.QueryValueEx` и `SetValueEx` работают с int-константами корня; добавлена регрессия.
+- GUI-тесты вызывают реальные методы очереди и обработки сканирования. Общий `_ensure_main` используется в GUI-наборах, подмены модулей и окружения откатываются; нативная проверка версии подменяется до импорта, без сбрасывающего патч reload.
+- Sandbox-тест записывает настоящий двухбайтовый BOM FF FE вместо восьми ASCII-символов.
+- Coverage: действующий `fail_under = 50` вместо игнорируемого `failunder`; политика описана в CONTRIBUTING.
+- Ruff: удалено ошибочное `known-first-party = ["layout_cleaner"]`.
+
+### Добавлено
+- Восемь изолированных тестов настоящего PowerShell: GUID-TIP для zh-CN, zh-TW, ja-JP, ko-KR, dry-run и apply. Get/Set-WinUserLanguageList подменены в дочернем процессе; языки пользователя не меняются.
+- Mypy в CI и в dev lock-файле (версия согласована с pre-commit); сборки зависят от проверки типов.
+- Исключение локальной распакованной копии релиза из обнаружения pytest; оригиналы не удаляются.
+- BUILD.md с инструкциями onedir-сборки. Портативный EXE 1.0.5 собран и проверен запуском.
+
+### Удалено
+- Неиспользуемые `_build_cleanup_script` и `_load_ps1_script`.
+- Дублирующий блок `[project.optional-dependencies] dev`: зависимости разработки управляются через requirements-dev.in / requirements-dev.txt; PyInstaller устанавливается отдельно.
+- Пустой корневой `__init__.py`: проект использует плоскую структуру модулей.
+
+## [1.0.4] — 2026-09-17
+
 ### Исправлено (по итогам ревью)
 - Cleaner: внедрён контекстный менеджер `CtfmonSuspender` для гарантированного перезапуска `ctfmon.exe` и `TextInputHost.exe` даже при исключениях во время очистки.
 - Cleaner: операции очистки (`_wipe_branches`) приведены к идемпотентному виду — безопасный многократный вызов без побочных эффектов.
@@ -116,7 +143,8 @@
 - CI/CD пайплайн (lint, test, build, release)
 - Полное покрытие тестами (unit + integration + live)
 
-[Unreleased]: https://github.com/mrzsrg/KeyboardLayoutCleaner/compare/v1.0.4...HEAD
+[Unreleased]: https://github.com/mrzsrg/KeyboardLayoutCleaner/compare/v1.0.5...HEAD
+[1.0.5]: https://github.com/mrzsrg/KeyboardLayoutCleaner/compare/v1.0.4...v1.0.5
 [1.0.4]: https://github.com/mrzsrg/KeyboardLayoutCleaner/releases/tag/v1.0.4
 [1.0.3]: https://github.com/mrzsrg/KeyboardLayoutCleaner/releases/tag/v1.0.3
 [1.0.1]: https://github.com/mrzsrg/KeyboardLayoutCleaner/releases/tag/v1.0.1

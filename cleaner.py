@@ -46,37 +46,6 @@ logger = logging.getLogger("layout_cleaner")
 applog.setup_null_handler(logger)
 
 
-def _load_ps1_script(name: str) -> str:
-    """Загрузить PowerShell-скрипт из scripts/*.ps1.
-
-    Parameters
-    ----------
-    name : str
-        Имя файла без расширения (например, ``layout_cleaner_cleanup``).
-
-    Returns
-    -------
-    str
-        Содержимое файла.
-
-    Raises
-    ------
-    FileNotFoundError
-        Если файл скрипта не найден.
-    """
-    path = _PS_DIR / f"{name}.ps1"
-    if not path.exists():
-        msg = (
-            f"PowerShell-скрипт не найден: {path}. "
-            f"Проверьте, что папка scripts/ существует и содержит {name}.ps1."
-        )
-        logger.error(msg)
-        raise FileNotFoundError(msg)
-    content = path.read_text(encoding="utf-8")
-    logger.debug("Загружен PS1-скрипт: %s (%d байт)", name, len(content))
-    return content
-
-
 # ---------------------------------------------------------------------------
 # Режим песочницы — синхронизируется с scanner.SANDBOX_MODE через config
 # ---------------------------------------------------------------------------
@@ -1128,29 +1097,6 @@ _CJK_FALLBACK_KLIDS: dict[str, str] = {
 }
 
 
-def _build_cleanup_script(layout_klid: str, apply: bool = True) -> str:
-    """
-    Собрать PowerShell-скрипт очистки из файла.
-
-    Скрипт изменяет объекты, возвращённые Get-WinUserLanguageList, «на месте»
-    (InputMethodTips.Remove) — прочие настройки языка сохраняются, в отличие
-    от пересоздания списка через New-WinUserLanguageList.
-
-    При apply=False система НЕ изменяется: скрипт только отчитывается
-    строками ``DROP|<тег>|<tip>`` / ``REMOVELANG|<тег>`` и завершается
-    статусом ``DRYRUN`` — это основа dry-run (plan_layout_removal).
-
-    Защита от PS-инъекции: KLID обязан быть ровно 8 HEX-символов —
-    передаётся через параметр PS, а не через f-string.
-    """
-    if not re.fullmatch(r"[0-9a-fA-F]{8}", str(layout_klid)):
-        raise ValueError(
-            f"Некорректный KLID для PS-скрипта: '{layout_klid}'. "
-            "Ожидается ровно 8 HEX-символов."
-        )
-    return _load_ps1_script("layout_cleaner_cleanup")
-
-
 def _parse_ps_plan(output: str) -> dict[str, list[str]]:
     """Разобрать строки DROP|/REMOVELANG| из вывода PS-скрипта."""
     tips: list[str] = []
@@ -1572,6 +1518,16 @@ def _is_language_sync_blocked() -> bool:
                 return False
     except OSError:
         return False
+
+
+def is_language_sync_blocked() -> bool:
+    """Публичная обёртка: заблокирована ли синхронизация языков с облаком.
+
+    Возвращает ``True`` если значение ``Enabled=0`` существует в
+    ``SettingSync\\Groups\\Language``, ``False`` если ключ/значение
+    отсутствуют или значение отличается от ``0``.
+    """
+    return _is_language_sync_blocked()
 
 
 def disable_language_sync() -> tuple[bool, str]:

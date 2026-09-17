@@ -61,7 +61,32 @@ python -m ruff format --check . # проверка форматирования
 `max-complexity = 15` (см. `ruff.toml`) — не обходите его, а декомпозируйте
 сложные функции на мелкие хелперы. Новые сложные функции не приветствуются.
 
-Есть pre-commit: `pre-commit install` (ruff, mypy, codespell и пр.).
+## Статическая типизация (mypy)
+
+Мypy проверяется на двух уровнях:
+
+| Уровень | Где | Зачем |
+|---------|-----|-------|
+| **pre-commit** | локально, на коммите | мгновенная обратная связь для автора |
+| **CI** | GitHub Actions, job `mypy` | страховка — не пропускает ошибки в мейнстрим |
+
+Запуск вручную:
+
+```bat
+python -m mypy main.py mutex.py scanner.py cleaner.py config.py winproc.py applog.py i18n.py gui_widgets.py ui_theme.py
+```
+
+Если mypy локально зелёный, а в CI красится — проверяй `.mypy_cache` (очисти `Remove-Item -Recurse -Force .mypy_cache`) и версию Python (CI гоняет на 3.12).
+
+## Покрытие тестами (coverage)
+
+Покрытие контролируется через `fail_under = 50` в `[tool.coverage.report]` файла `pyproject.toml`. Текущий порог — **50%** для основных модулей: `main`, `scanner`, `cleaner`, `config`, `winproc`, `applog`, `i18n`, `gui_widgets`, `ui_theme`, `mutex`.
+
+```bat
+python -m pytest -m "not live" --cov --cov-report=term-missing
+```
+
+Если покрытие падает ниже порога — CI (job `test`) не пройдёт. Напишите тесты на ключевые сценарии перед отправкой PR.
 
 ## Сборка .exe
 

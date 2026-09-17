@@ -1071,6 +1071,27 @@ class TestLanguageSync:
         assert ok
         assert "уже" in detail.lower()
 
+    def test_public_wrapper_is_language_sync_blocked(self, fake_winreg):
+        """Публичная обёртка is_language_sync_blocked() == _is_language_sync_blocked().
+
+        Раньше `_is_language_sync_blocked` была закрытой, и main.py не могла
+        прочитать состояние из реестра, чтобы проинициализировать галочку.
+        Теперь UI показывает реальное состояние.
+        """
+        with _install_fake_winreg(fake_winreg):
+            # По умолчанию (нет ключа) — не заблокирована
+            assert not cleaner.is_language_sync_blocked()
+
+            # disable_language_sync устанавливает Enabled=0
+            ok, _ = cleaner.disable_language_sync()
+            assert ok
+            assert cleaner.is_language_sync_blocked()
+
+            # enable_language_sync снимает блокировку
+            ok, _ = cleaner.enable_language_sync()
+            assert ok
+            assert not cleaner.is_language_sync_blocked()
+
     def test_sandbox_scan_excludes_powershell_source(self, fake_winreg):
         """В sandbox PowerShell-источник исключён — изоляция полная.
 

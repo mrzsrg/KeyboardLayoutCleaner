@@ -480,7 +480,8 @@ class TestDryRunAndBackupLive(SandboxTestCase):
     def test_backup_language_list_writes_json(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             fake = Path(tmp_dir) / "backup.reg"
-            fake.write_bytes(b"\\xff\\xfe")
+            fake.write_bytes(b"\xff\xfe")
+            assert fake.read_bytes() == bytes([0xFF, 0xFE])
             json_path = cleaner._backup_language_list(fake)
             assert json_path
             data = json.loads(Path(json_path).read_text(encoding="utf-8"))

@@ -67,7 +67,7 @@ def confirm_wait_dialog(seconds: int) -> bool:
         # Нет интерактивной сессии (служба, CI) — ждём молча.
         logger.info("Диалог ожидания мьютекса недоступен — продолжаем ожидание")
         return True
-    return result != _IDCANCEL
+    return result != _IDCANCEL  # type: ignore[no-any-return]
 
 
 def acquire_mutex(

@@ -37,4 +37,5 @@ ignore = [
 max-complexity = 15
 
 [lint.isort]
-known-first-party = ["layout_cleaner"]
+# Для flat-структуры (модули в корне) ruff автоматически определяет
+# first-party модули — явное указание не требуется.

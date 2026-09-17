@@ -6,7 +6,7 @@ import time
 
 import pytest
 
-_MUTEX_NAME = r"Global\TestKLC_FullRestart_{B4G9C3D2-8E5F-4B9C-9D7G-2F3E4G5H6I7J}"
+_MUTEX_NAME = r"Local\TestKLC_FullRestart_{B4G9C3D2-8E5F-4B9C-9D7G-2F3E4G5H6I7J}"
 
 
 def _create_script(name, content):

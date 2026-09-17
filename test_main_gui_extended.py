@@ -1,196 +1,311 @@
-"""test_main_gui_extended.py - Extended GUI tests for KeyboardLayoutCleaner."""
+"""test_main_gui_extended.py - Extended GUI tests for KeyboardLayoutCleaner.
 
-import ctypes
+Тестируют реальные методы main.py: диспетчеризацию очереди _process_ui_queue
+и применение результатов сканирования _apply_scan_results.
+
+Используют общие моки из conftest.py (_make_ctk, _make_gui_widgets_mock).
+"""
+
 import queue
-import sys
-import types
 from unittest import mock
 
 import pytest
 
-
-def _make_ctk():  # noqa: C901 - тестовый мок customtkinter: намеренно всеобъемлющий
-    ctk = types.ModuleType("customtkinter")
-
-    class Widget:
-        def __init__(self, *a, **kw):
-            self._configure_kwargs = kw
-            self.configure_kwargs = kw
-            self.state_value = "normal"
-
-        def configure(self, **kw):
-            self.configure_kwargs.update(kw)
-            if "state" in kw:
-                self.state_value = kw["state"]
-
-        def pack(self, *a, **k):
-            pass
-
-        def grid(self, *a, **k):
-            pass
-
-        def grid_columnconfigure(self, *a, **k):
-            pass
-
-        def title(self, v=None):
-            pass
-
-        def after(self, d, f=None, *a):
-            return None
-
-        def after_cancel(self, *a, **k):
-            pass
-
-        def destroy(self):
-            pass
-
-        def set(self, v):
-            pass
-
-        def cget(self, k):
-            return self._configure_kwargs.get(k, "")
-
-        def winfo_children(self):
-            return []
-
-    class ScrollableFrame(Widget):
-        def __init__(self, *a, **kw):
-            super().__init__(*a, **kw)
-            self._frame = types.SimpleNamespace()
-
-    class OptionMenu(Widget):
-        def __init__(self, *a, **kw):
-            super().__init__(*a, **kw)
-            self.variable = types.SimpleNamespace(set=lambda x: None, get=lambda: False)
-
-    def _mk(name):
-        if name in ("CTk", "CTkLabel", "CTkButton", "CTkFrame", "CTkEntry"):
-            return type(name, (Widget,), {})
-        elif name == "CTkScrollableFrame":
-            return ScrollableFrame
-        elif name == "CTkOptionMenu":
-            return OptionMenu
-        else:
-            return type(name, (Widget,), {})
-
-    for cls in (
-        "CTk",
-        "CTkLabel",
-        "CTkButton",
-        "CTkFrame",
-        "CTkEntry",
-        "CTkScrollableFrame",
-        "CTkFont",
-        "CTkOptionMenu",
-        "CTkSwitch",
-    ):
-        setattr(ctk, cls, _mk(cls))
-    ctk.ScalingTracker = type("S", (), {"get_window_scaling": lambda *a: 1.0})
-    ctk.set_appearance_mode = lambda *a: None
-    ctk.set_default_color_theme = lambda *a: None
-    return ctk
-
-
-@pytest.fixture(autouse=True)
-def _mock_dependencies(monkeypatch):
-    """Подменить нативные зависимости GUI на моки — С ГАРАНТИРОВАННЫМ ОТКАТОМ.
-
-    Раньше ctypes.windll / winreg.OpenKeyEx заменялись прямым присваиванием,
-    а teardown чистил только sys.modules — мок kernel32 «протекал» во все
-    последующие тесты и ломал модули, работающие с настоящим kernel32
-    (test_mutex_restart.py, test_restart_integration.py, test_elevation.py)
-    при алфавитном порядке прогона. Ручной список файлов в CI маскировал
-    поломку. monkeypatch восстанавливает оригиналы после каждого теста.
-    """
-    monkeypatch.setitem(sys.modules, "_ctypes", mock.MagicMock())
-    monkeypatch.setattr(ctypes, "windll", mock.MagicMock())
-    monkeypatch.setattr(ctypes, "wintypes", types.SimpleNamespace())
-    import winreg as _wr
-
-    monkeypatch.setattr(_wr, "OpenKeyEx", mock.MagicMock(return_value=mock.MagicMock()))
-    monkeypatch.setattr(_wr, "EnumValue", mock.MagicMock(side_effect=FileNotFoundError))
-    ctk = _make_ctk()
-    monkeypatch.setitem(sys.modules, "customtkinter", ctk)
+from conftest import _ensure_main
 
 
 @pytest.fixture
-def mock_main_window():
-    mock_window = mock.MagicMock()
-    mock_window.master = mock_window
-    call_queue = queue.Queue()
-    mock_window.call_queue = call_queue
-    return mock_window, call_queue
+def app_factory(monkeypatch):
+    """Return a factory with reversible imports and no real registry access."""
+
+    def create():
+        main_mod = _ensure_main(monkeypatch)
+        app = main_mod.KeyboardLayoutCleaner()
+        app.after = mock.MagicMock()
+        return main_mod, app
+
+    return create
 
 
-class TestSandboxMode:
-    """Tests for sandbox mode functionality."""
+def _build_app_mocks(app_factory) -> tuple:
+    main_mod, app = app_factory()
+    return main_mod, app, {}
 
-    def test_sandbox_enable_disable(self):
-        import config
 
-        config.disable_sandbox()
-        assert not config.is_sandbox_enabled()
-        config.enable_sandbox()
-        assert config.is_sandbox_enabled()
-        config.disable_sandbox()
-        assert not config.is_sandbox_enabled()
+# ---------------------------------------------------------------------------
+# TestUiQueueDispatch
+# ---------------------------------------------------------------------------
 
-    def test_sandbox_is_thread_safe(self):
-        import threading
 
-        import config
+class TestUiQueueDispatch:
+    """Tests for KeyboardLayoutCleaner._post / _process_ui_queue."""
 
-        assert hasattr(config._sandbox_lock, "acquire")
-        assert isinstance(config._sandbox_lock, type(threading.Lock()))
+    def test_post_enqueue_calls_function(self, app_factory):
+        """_post должен положить (func, args) в _ui_queue."""
+        _main_mod, app, _ = _build_app_mocks(app_factory)
+
+        called = []
+
+        def fake_func(*a):
+            called.append(a)
+
+        app._post(fake_func, "hello", 42)
+        func, args = app._ui_queue.get_nowait()
+        assert func is fake_func
+        assert args == ("hello", 42)
+
+    def test_process_ui_queue_executes_tasks(self, app_factory):
+        """_process_ui_queue должен выполнить все функции из очереди."""
+        _main_mod, app, _ = _build_app_mocks(app_factory)
+
+        results = []
+
+        def add_one(v: int) -> None:
+            results.append(v + 1)
+
+        def add_two(v: int) -> None:
+            results.append(v + 2)
+
+        app._ui_queue.put((add_one, (10,)))
+        app._ui_queue.put((add_two, (20,)))
+        app._process_ui_queue()
+
+        assert results == [11, 22]
+
+    def test_process_ui_queue_handles_exceptions(self, app_factory):
+        """_process_ui_queue должен корректно обрабатывать исключения."""
+        _main_mod, app, _ = _build_app_mocks(app_factory)
+
+        def always_fails() -> None:
+            raise ValueError("boom")
+
+        app._ui_queue.put((always_fails, ()))
+        app._process_ui_queue()
+
+        # _process_ui_queue вызывает self.after(...) для повторного запуска
+        app.after.assert_called()
+
+    def test_ui_queue_is_thread_safe(self, app_factory):
+        """_ui_queue — экземпляр queue.Queue."""
+        _main_mod, app, _ = _build_app_mocks(app_factory)
+
+        assert isinstance(app._ui_queue, queue.Queue)
+        assert hasattr(app._ui_queue, "put")
+        assert hasattr(app._ui_queue, "get_nowait")
+
+
+# ---------------------------------------------------------------------------
+# TestApplyScanResults
+# ---------------------------------------------------------------------------
+
+
+class TestApplyScanResults:
+    """Tests for KeyboardLayoutCleaner._apply_scan_results."""
+
+    def test_apply_scan_results_updates_layouts_data(self, app_factory):
+        """_apply_scan_results должен сохранить layouts."""
+        _main_mod, app, _ = _build_app_mocks(app_factory)
+
+        layouts: dict[str, list[dict[str, str]]] = {
+            "00000409": [{"name": "English", "klid": "00000409"}],
+            "00000419": [{"name": "Русский", "klid": "00000419"}],
+        }
+
+        app._render_layouts_list = mock.MagicMock()
+        app.list_title_label = mock.MagicMock()
+        app.current_layout_klid = ""
+        app.delete_button = mock.MagicMock()
+        app._render_layouts_overview = mock.MagicMock()
+        app._set_status = mock.MagicMock()
+        app._set_stage = mock.MagicMock()
+
+        app._apply_scan_results(layouts)
+
+        assert app.layouts_data is layouts
+        app._render_layouts_list.assert_called_once()
+        app.list_title_label.configure.assert_called_once()
+        app._set_status.assert_called_once()
+
+    def test_apply_scan_results_on_empty(self, app_factory):
+        """_apply_scan_results обрабатывает пустой результат."""
+        _main_mod, app, _ = _build_app_mocks(app_factory)
+
+        app._render_layouts_list = mock.MagicMock()
+        app.list_title_label = mock.MagicMock()
+        app.delete_button = mock.MagicMock()
+        app._render_layouts_overview = mock.MagicMock()
+        app._set_status = mock.MagicMock()
+        app._set_stage = mock.MagicMock()
+
+        app._apply_scan_results({})
+
+        app.list_title_label.configure.assert_called_once()
+        app._render_layouts_overview.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# TestAfterScanSuccess
+# ---------------------------------------------------------------------------
+
+
+class TestAfterScanSuccess:
+    """Tests for KeyboardLayoutCleaner._after_scan_success."""
+
+    def test_success_enables_scan_button(self, app_factory):
+        """_after_scan_success должен включить scan_button."""
+        _main_mod, app, _ = _build_app_mocks(app_factory)
+
+        app.scan_button = mock.MagicMock()
+        app.restore_button = mock.MagicMock()
+        app._apply_scan_results = mock.MagicMock()
+        app._progress_stop = mock.MagicMock()
+
+        layouts: dict[str, list[dict[str, str]]] = {"klid": [{"name": "en"}]}
+        app._after_scan_success(layouts)
+
+        # configure вызывается с state='normal' (может включать и другие аргументы)
+        call_args = app.scan_button.configure.call_args
+        assert call_args[1].get("state") == "normal"
+        app._apply_scan_results.assert_called_once()
+
+    def test_success_sets_scan_done_flag(self, app_factory):
+        """_after_scan_success устанавливает _scan_done = True."""
+        _main_mod, app, _ = _build_app_mocks(app_factory)
+
+        app._scan_done = False
+        app.scan_button = mock.MagicMock()
+        app.restore_button = mock.MagicMock()
+        app._apply_scan_results = mock.MagicMock()
+        app._progress_stop = mock.MagicMock()
+
+        layouts: dict[str, list[dict[str, str]]] = {"klid": [{"name": "en"}]}
+        app._after_scan_success(layouts)
+
+        assert app._scan_done is True
+
+
+# ---------------------------------------------------------------------------
+# TestVersionCheck
+# ---------------------------------------------------------------------------
 
 
 class TestVersionCheck:
-    def test_version_from_metadata(self):
-        import config
+    """Tests for version detection."""
 
-        assert hasattr(config, "__version__")
-        assert isinstance(config.__version__, str)
-        assert len(config.__version__) > 0
+    def test_version_from_metadata(self, app_factory):
+        """app_version должен быть не пустой строкой."""
+        _main_mod, _app = app_factory()
 
-
-class TestI18n:
-    def test_t_returns_string(self):
-        from gui_widgets import _t
-
-        result = _t("app_title")
-        assert isinstance(result, str)
-        assert len(result) > 0
-
-    def test_t_fallback_on_missing_key(self):
-        from gui_widgets import _t
-
-        result = _t("__NONEXISTENT_KEY__")
-        assert isinstance(result, str)
+        assert hasattr(_main_mod, "app_version")
+        assert isinstance(_main_mod.app_version, str)
+        assert len(_main_mod.app_version) > 0
 
 
-class TestScaling:
-    def test_get_dpi_scaling(self):
-        import customtkinter as ctk
-
-        mock_widget = mock.MagicMock()
-        ctk.ScalingTracker.get_window_scaling = mock.MagicMock(return_value=1.0)
-        assert ctk.ScalingTracker.get_window_scaling(mock_widget) == 1.0
+# ---------------------------------------------------------------------------
+# TestLangChange
+# ---------------------------------------------------------------------------
 
 
-class TestQueueProcessing:
-    def test_process_queue_dispatches_functions(self, mock_main_window):
-        _mock_window, call_queue = mock_main_window
-        assert isinstance(call_queue, queue.Queue)
+class TestLangChange:
+    """Tests for KeyboardLayoutCleaner._on_lang_change."""
+
+    def test_lang_change_calls_apply_static_texts(self, app_factory):
+        """_on_lang_change должен вызвать _apply_static_texts."""
+        _main_mod, app, _ = _build_app_mocks(app_factory)
+
+        app._apply_static_texts = mock.MagicMock()
+        app._on_lang_change("English")
+
+        app._apply_static_texts.assert_called_once()
+
+    def test_lang_change_accepts_language_code(self, app_factory):
+        """_on_lang_change должен принимать строку-язык."""
+        _main_mod, app, _ = _build_app_mocks(app_factory)
+
+        app._apply_static_texts = mock.MagicMock()
+        app._on_lang_change("en")
+        app._apply_static_texts.assert_called()
 
 
-class TestScanMethods:
-    def test_on_scan_clicked_triggers_scan(self, mock_main_window):
-        _mock_window, call_queue = mock_main_window
-        assert isinstance(call_queue, queue.Queue)
+# ---------------------------------------------------------------------------
+# TestThemeToggle
+# ---------------------------------------------------------------------------
 
-    def test_apply_scan_results_updates_list(self, mock_main_window):
-        _mock_window, _call_queue = mock_main_window
-        test_layouts = [
-            {"klid": "0804:00000409", "layout": "English", "type": "keyboard"}
-        ]
-        assert len(test_layouts) == 1
+
+class TestThemeToggle:
+    """Tests for KeyboardLayoutCleaner._on_toggle_theme."""
+
+    def test_toggle_theme_calls_rebuild(self, app_factory):
+        """_on_toggle_theme должен вызвать _rebuild_ui."""
+        _main_mod, app, _ = _build_app_mocks(app_factory)
+
+        app._rebuild_ui = mock.MagicMock()
+        app._view_switch_allowed = mock.MagicMock(return_value=True)
+
+        app._on_toggle_theme()
+
+        app._rebuild_ui.assert_called_once()
+
+    def test_toggle_theme_respects_lock(self, app_factory):
+        """_on_toggle_theme не должен перестраивать UI в busy-состоянии."""
+        _main_mod, app, _ = _build_app_mocks(app_factory)
+
+        app._rebuild_ui = mock.MagicMock()
+        app._view_switch_allowed = mock.MagicMock(return_value=False)
+
+        app._on_toggle_theme()
+
+        app._rebuild_ui.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# TestBrightnessChange
+# ---------------------------------------------------------------------------
+
+
+class TestBrightnessChange:
+    """Tests for KeyboardLayoutCleaner._on_brightness_change."""
+
+    def test_brightness_change_calls_rebuild(self, app_factory):
+        """_on_brightness_change должен вызвать _rebuild_ui."""
+        _main_mod, app, _ = _build_app_mocks(app_factory)
+
+        app._rebuild_ui = mock.MagicMock()
+        app._view_switch_allowed = mock.MagicMock(return_value=True)
+
+        app._on_brightness_change("normal")
+
+        app._rebuild_ui.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# TestStaticTextsApply
+# ---------------------------------------------------------------------------
+
+
+class TestStaticTextsApply:
+    """Tests for KeyboardLayoutCleaner._apply_static_texts."""
+
+    def test_static_texts_applies_language(self, app_factory):
+        """_apply_static_texts должен обновить заголовок окна."""
+        _main_mod, app, _ = _build_app_mocks(app_factory)
+
+        app.admin_banner = mock.MagicMock()
+        app.admin_banner.apply_language = mock.MagicMock()
+        app._apply_action_button_texts = mock.MagicMock()
+        app.block_sync_checkbox = mock.MagicMock()
+        app._update_admin_banner = mock.MagicMock()
+        app.details_title_label = mock.MagicMock()
+        app._apply_list_titles = mock.MagicMock()
+        app._list_placeholder = mock.MagicMock()
+        app._apply_details_panel = mock.MagicMock()
+        app.backup_label = mock.MagicMock()
+        app._last_backup_info = ("", "")
+        app._set_stage = mock.MagicMock()
+
+        app._apply_static_texts()
+
+        app.admin_banner.apply_language.assert_called_once()
+        app._apply_action_button_texts.assert_called_once()
+        app._update_admin_banner.assert_called_once()
+        app._set_stage.assert_called_once()

@@ -1,12 +1,6 @@
-# ---------------------------------------------------------------------------
-# Import _ensure_main from test_main module
-# ---------------------------------------------------------------------------
-import sys
 from unittest import mock
 
-if "test_main" not in sys.modules:
-    __import__("test_main")
-from test_main import _ensure_main
+from conftest import _ensure_main
 
 
 # ---------------------------------------------------------------------------
@@ -122,7 +116,7 @@ class TestConstants:
         import main
 
         assert isinstance(main._MUTEX_NAME, str)
-        assert "Global" in main._MUTEX_NAME
+        assert "Local" in main._MUTEX_NAME
 
     def test_hklm_catalog_path_defined(self, monkeypatch):
         _ensure_main(monkeypatch)

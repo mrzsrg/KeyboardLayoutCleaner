@@ -157,7 +157,7 @@ from mutex import confirm_wait_dialog as _mutex_confirm_wait  # noqa: E402
 from mutex import release_mutex as _mutex_release  # noqa: E402
 
 # Алиасы для обратной совместимости с тестами
-_MUTEX_NAME = r"Global\KeyboardLayoutCleaner_{A3F8B2C1-7D4E-4A9B-8C6F-1E2D3F4A5B6C}"
+_MUTEX_NAME = r"Local\KeyboardLayoutCleaner_{A3F8B2C1-7D4E-4A9B-8C6F-1E2D3F4A5B6C}"
 
 
 def _acquire_mutex(is_elevate: bool = False):
@@ -199,8 +199,12 @@ def _check_windows_version():
 
         ver = RtlOsVersionInfoW()
         ver.dwOSVersionInfoSize = ctypes.sizeof(ver)
-        ret = ntdll.RtlGetVersion(ctypes.byref(ver), ctypes.byref(ctypes.c_int()))
-        if ret != 0:  # NTSTATUS success
+
+        ntdll.RtlGetVersion.argtypes = [ctypes.POINTER(RtlOsVersionInfoW)]
+        ntdll.RtlGetVersion.restype = ctypes.c_long
+
+        ret = ntdll.RtlGetVersion(ctypes.byref(ver))
+        if ret != 0:  # NTSTATUS != 0 means failure; STATUS_SUCCESS == 0
             return False, None
         is_ok = ver.dwMajorVersion >= 10 and ver.dwBuildNumber >= 10240
         return is_ok, ver
@@ -225,7 +229,7 @@ if not is_ok:
 
 
 # должен быть вычислен (_parse_sandbox_mode выше) до импорта scanner/cleaner.
-import customtkinter as ctk  # noqa: E402
+import customtkinter as ctk  # type: ignore[import-untyped]  # noqa: E402
 
 from applog import get_app_dir, get_logger  # noqa: E402
 from cleaner import (  # noqa: E402
@@ -234,6 +238,7 @@ from cleaner import (  # noqa: E402
     enable_language_sync,
     get_backup_dir,
     is_admin,
+    is_language_sync_blocked,
     list_backups,
     plan_layout_removal,
     restore_backup,
@@ -370,6 +375,9 @@ class KeyboardLayoutCleaner(ctk.CTk):
 
         # Состояние процесса перезапуска (защита от двойного нажатия)
         self._is_elevating: bool = False
+
+        # Хэндл именованного мьютекса для single-instance (int из CreateMutex)
+        self._mutex_handle: int | None = None
 
         # Ссылки на виджеты (будут инициализированы после создания)
         self.admin_label: ctk.CTkLabel | None = None
@@ -580,6 +588,8 @@ class KeyboardLayoutCleaner(ctk.CTk):
             on_toggle_sync=self._on_toggle_block_sync,
         )
         self.actions.pack(side="bottom", fill="x", padx=20, pady=(5, 10))
+        # Инициализация состояния галочки из реестра
+        self.actions.set_block_sync(is_language_sync_blocked())
         # Алиасы для обратной совместимости с остальным кодом main.py
         self.delete_button = self.actions.delete_btn
         self.restore_button = self.actions.restore_btn
@@ -1346,7 +1356,7 @@ class KeyboardLayoutCleaner(ctk.CTk):
             self.delete_button.configure(state="disabled", text=_t("btn_delete_busy"))
         if self.restore_button:
             self.restore_button.configure(state="disabled")
-        self.backup_label.configure(text="")
+        self.backup_label.configure(text="")  # type: ignore[union-attr]
         self._set_status(_t("status_deleting"))
         self._progress_start()
 
@@ -1485,7 +1495,7 @@ class KeyboardLayoutCleaner(ctk.CTk):
         if lang_backup:
             label_lines.append(_t("dlg_backup_langlist", path=lang_backup))
         if label_lines:
-            self.backup_label.configure(text="\n".join(label_lines))
+            self.backup_label.configure(text="\n".join(label_lines))  # type: ignore[union-attr]
 
         # Обновляем данные — пересканируем в фоновом потоке
         self._refresh_after_delete()
@@ -1539,14 +1549,14 @@ class KeyboardLayoutCleaner(ctk.CTk):
         elif ctfmon is False:
             msg += "\n" + _t("dlg_result_ctfmon_fail")
         msg += "\n\n" + _t("dlg_advice_restore")
-        return msg
+        return msg  # type: ignore[no-any-return]
 
     def _build_failure_message(self, report: dict[str, Any], sync_detail: str) -> str:
         """Собрать сообщение о неудаче удаления для диалога результата."""
         msg = _t("dlg_delete_failed_nosync", detail=sync_detail or "нет данных")
         if report.get("error"):
             msg += "\n\n" + _t("dlg_delete_failed", error=report["error"])
-        return msg
+        return msg  # type: ignore[no-any-return]
 
     def _after_delete_error(self, error_msg: str) -> None:
         """Обработка ошибки удаления."""

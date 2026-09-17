@@ -365,7 +365,7 @@ def deactivate_sandbox() -> None:
     global AFFECTED_BRANCHES, HKCU_BRANCHES, HKU_BRANCHES
     global HKLM_BRANCHES, _RECURSIVE_SCAN
 
-    AFFECTED_BRANCHES = [tuple(b) for b in _ORIGINAL_AFFECTED_BRANCHES]
+    AFFECTED_BRANCHES = list(_ORIGINAL_AFFECTED_BRANCHES)
     HKCU_BRANCHES = [
         (subkey, scan_type)
         for root, subkey, scan_type, _admin in AFFECTED_BRANCHES
@@ -561,7 +561,7 @@ def _resolve_name(hex_code: str) -> str:
             winreg.OpenKey(layouts_key, hex_code) as layout_key,
         ):
             name, _ = winreg.QueryValueEx(layout_key, "Layout Text")
-            return name
+            return str(name)
     except FileNotFoundError:
         pass
     except OSError:

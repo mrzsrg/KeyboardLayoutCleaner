@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "keyboard-layout-cleaner"
-version = "1.0.4"
+version = "1.0.5"
 description = "GUI-утилита для поиска и безопасного удаления фантомных раскладок клавиатуры в Windows"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -27,13 +27,6 @@ dependencies = [
     "customtkinter>=5.2.0",
 ]
 
-[project.optional-dependencies]
-dev = [
-    "pytest>=8.0",
-    "pytest-cov>=5.0",
-    "pyinstaller>=6.0",
-]
-
 # ВАЖНО: `pip install .` НЕ является поддерживаемым способом установки.
 # Приложение — портативная GUI-утилита для Windows; данные (locales/*.json,
 # scripts/*.ps1, assets/) не упаковываются в site-packages при flat-сборке,
@@ -44,6 +37,8 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["."]
+# Локальная распакованная копия релиза не является вторым набором тестов.
+norecursedirs = [".*", "build", "dist", "venv", "__pycache__", "KeyboardLayoutCleaner"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
@@ -67,6 +62,9 @@ source = [
     "ui_theme",
 ]
 omit = ["*/conftest.py", "*/test_*.py", "*/__init__.py"]
+
+[tool.coverage.report]
+fail_under = 50
 
 [tool.setuptools]
 # Плоский модульный layout: явно перечисляем модули приложения, чтобы
@@ -94,3 +92,6 @@ check_untyped_defs = true
 disallow_untyped_decorators = false
 no_implicit_optional = true
 strict_optional = true
+# Flat-структура: __init__.py / __main__.py в корне конфликтуют с проверкой «.»
+# как модуля. Исключаем их и тесты/скрипты.
+exclude = ["test_", "scripts/", "__init__\\.py$", "__main__\\.py$"]

@@ -13,39 +13,13 @@ import ctypes
 import sys
 from unittest import mock
 
-# Import shared mocks from conftest (avoids duplication)
-from conftest import _make_ctk
-from conftest import _make_gui_widgets_mock as _make_gui_widgets
+from conftest import _ensure_main
 
 
 def _make_app(monkeypatch):
-    """Helper: load main and create app instance."""
-    import importlib
-
-    monkeypatch.delitem(sys.modules, "main", raising=False)
-    monkeypatch.delitem(sys.modules, "config", raising=False)
-    monkeypatch.setitem(sys.modules, "customtkinter", _make_ctk())
-    monkeypatch.setitem(sys.modules, "gui_widgets", _make_gui_widgets())
-    os = __import__("os")
-    os.environ.pop("SANDBOX_MODE", None)
-    # Use reload to ensure fresh bytecode (avoids stale .pyc issues)
-    main_mod = importlib.reload(__import__("main"))
-    app = main_mod.KeyboardLayoutCleaner()
-    return main_mod, app
-
-
-def _ensure_main(monkeypatch):
-    """Ensure main module is loaded with mocked dependencies."""
-    import importlib
-
-    monkeypatch.delitem(sys.modules, "main", raising=False)
-    monkeypatch.delitem(sys.modules, "config", raising=False)
-    monkeypatch.setitem(sys.modules, "customtkinter", _make_ctk())
-    monkeypatch.setitem(sys.modules, "gui_widgets", _make_gui_widgets())
-    os = __import__("os")
-    os.environ.pop("SANDBOX_MODE", None)
-    # Use reload to ensure fresh bytecode (avoids stale .pyc issues)
-    return importlib.reload(__import__("main"))
+    """Load main with shared, reversible mocks and create the GUI."""
+    main_mod = _ensure_main(monkeypatch)
+    return main_mod, main_mod.KeyboardLayoutCleaner()
 
 
 # TestMainFunction
@@ -141,6 +115,22 @@ class TestKeyboardLayoutCleanerInit:
         _main_mod, app = _make_app(monkeypatch)
         assert hasattr(app, "_pulse_state")
         assert hasattr(app, "_pulse_job")
+
+    def test_block_sync_checkbox_initial_state_from_registry(self, monkeypatch):
+        """Constructor must read Enabled from the fake registry for both states."""
+        main_mod = _ensure_main(monkeypatch)
+        registry = sys.modules["cleaner"].winreg
+        path = r"Software\Microsoft\Windows\CurrentVersion\SettingSync\Groups\Language"
+        for enabled in (1, 0):
+            registry.set(registry.HKEY_CURRENT_USER, path, {"Enabled": enabled})
+            app = main_mod.KeyboardLayoutCleaner()
+            checkbox = app.actions.block_sync_checkbox
+            if enabled == 0:
+                checkbox.select.assert_called_once()
+                checkbox.deselect.assert_not_called()
+            else:
+                checkbox.deselect.assert_called_once()
+                checkbox.select.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -517,7 +507,7 @@ class TestConstants:
         import main
 
         assert isinstance(main._MUTEX_NAME, str)
-        assert "Global" in main._MUTEX_NAME
+        assert "Local" in main._MUTEX_NAME
 
     def test_hklm_path(self, monkeypatch):
         _ensure_main(monkeypatch)

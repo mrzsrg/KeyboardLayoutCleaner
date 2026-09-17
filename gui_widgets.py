@@ -14,7 +14,7 @@ import logging
 from collections.abc import Callable
 from typing import Any
 
-import customtkinter as ctk
+import customtkinter as ctk  # type: ignore[import-untyped]
 
 import i18n
 import ui_theme as theme
@@ -321,7 +321,6 @@ class ActionButtons(ctk.CTkFrame):
             command=self._on_toggle_sync,
         )
         self.block_sync_checkbox.pack(fill="x", pady=(6, 0))
-        self.block_sync_checkbox.select()
 
         # Кнопка восстановления
         self.restore_btn = ctk.CTkButton(

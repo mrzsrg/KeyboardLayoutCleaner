@@ -35,12 +35,13 @@ if ($LayoutKlid -notmatch '^[0-9a-fA-F]{8}$') {
     exit 1
 }
 
-# Пара CJK-раскладок (Chinese/Japanese/Korean) — требуют сопоставления тегов
+# CJK-раскладки: InputMethodTips хранят GUID вместо KLID,
+# маппинг LanguageTag → KLID (совпадает с scanner.py LAYOUT_MAP).
 $cjk = @{
-    'zh-CN' = 'zh-CN:00000804'
-    'zh-TW' = 'zh-TW:00000404'
-    'ja-JP' = 'ja-JP:00000411'
-    'ko-KR' = 'ko-KR:00001008'
+    'zh-CN' = '00000804'
+    'zh-TW' = '00000404'
+    'ja-JP' = '00000411'
+    'ko-KR' = '00000412'
 }
 
 try {
@@ -112,5 +113,5 @@ if (-not $Apply) {
     exit 0
 }
 
-Set-WinUserLanguageList -LanguageList @($kept) -Force | Out-Null
+Set-WinUserLanguageList -LanguageList $kept.ToArray() -Force | Out-Null
 Write-Output 'SUCCESS'

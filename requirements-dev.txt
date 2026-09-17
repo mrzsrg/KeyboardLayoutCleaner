@@ -6,7 +6,7 @@
 #
 colorama==0.4.6
     # via pytest
-coverage==7.16.0
+coverage[toml]==7.16.0
     # via pytest-cov
 customtkinter==6.0.0
     # via -r requirements.in
@@ -14,17 +14,27 @@ darkdetect==0.8.0
     # via customtkinter
 iniconfig==2.3.0
     # via pytest
+mypy==1.15.0
+    # via -r requirements-dev.in
+mypy-extensions==1.1.0
+    # via mypy
 packaging==26.3
     # via
     #   customtkinter
     #   pytest
 pluggy==1.6.0
-    # via pytest
+    # via
+    #   pytest
+    #   pytest-cov
 pygments==2.21.0
     # via pytest
 pytest==9.1.1
-    # via -r requirements-dev.in
+    # via
+    #   -r requirements-dev.in
+    #   pytest-cov
 pytest-cov==7.1.0
     # via -r requirements-dev.in
 ruff==0.14.13
     # via -r requirements-dev.in
+typing-extensions==4.16.0
+    # via mypy

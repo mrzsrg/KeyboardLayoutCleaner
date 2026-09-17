@@ -114,14 +114,18 @@ class FakeWinreg:
         return FakeKey(root_key, path)
 
     def QueryValueEx(self, root, name):  # noqa: N802
-        root_key, path = self._resolve(root, "" if isinstance(root, FakeKey) else root)
+        # root — либо FakeKey (подключённая ветка), либо int-константа (HKEY_*);
+        # в обоих случаях subkey_path = «» — _resolve() раскроет путь.
+        # Раньше для int-корня шло root → _norm(int) → .strip() → AttributeError.
+        root_key, path = self._resolve(root, "")
         node = self.nodes.get((root_key, path))
         if not node or name not in node["v"]:
             raise FileNotFoundError(f"Value not found: {name}")
         return node["v"][name]
 
     def SetValueEx(self, root, name, reserved, val_type, value):  # noqa: N802
-        root_key, path = self._resolve(root, "" if isinstance(root, FakeKey) else root)
+        # root — либо FakeKey, либо int-константа; subkey_path = «» в обоих случаях.
+        root_key, path = self._resolve(root, "")
         node = self.nodes.setdefault((root_key, path), {"v": {}, "kids": set()})
         node["v"][name] = (value, val_type)
 
@@ -400,6 +404,16 @@ def _make_gui_widgets_mock():
         def pack(self, *a, **k):
             pass
 
+        def set_block_sync(self, enabled: bool):
+            """Установить состояние галочки блокировки синхронизации."""
+            if enabled:
+                self.block_sync_checkbox.select()
+            else:
+                self.block_sync_checkbox.deselect()
+
+        def set_delete_enabled(self, enabled: bool):
+            self.delete_btn.configure(state="normal" if enabled else "disabled")
+
     class MockAdminBanner:
         def __init__(
             self,
@@ -426,17 +440,34 @@ def _make_gui_widgets_mock():
 
 
 def _ensure_main(monkeypatch):
-    """Load main.py with mocked dependencies and module cache clearing."""
+    """Import main once with reversible GUI mocks and a fake registry.
+
+    The native version query is stubbed during import, before main's startup
+    check runs. The real Python wrapper remains available for API tests.
+    """
+    import ctypes
     import importlib
 
-    monkeypatch.delitem(sys.modules, "main", raising=False)
-    monkeypatch.delitem(sys.modules, "config", raising=False)
+    for name in ("main", "config", "scanner", "cleaner"):
+        monkeypatch.setitem(sys.modules, name, None)
+        del sys.modules[name]
     monkeypatch.setitem(sys.modules, "customtkinter", _make_ctk())
     monkeypatch.setitem(sys.modules, "gui_widgets", _make_gui_widgets_mock())
-    os.environ.pop("SANDBOX_MODE", None)
-    # Use reload to ensure fresh bytecode (avoids stale .pyc issues)
-    main_mod = __import__("main")
-    return importlib.reload(main_mod)
+    monkeypatch.delenv("SANDBOX_MODE", raising=False)
+
+    def version_query(pointer):
+        pointer._obj.dwMajorVersion = 10
+        pointer._obj.dwBuildNumber = 19045
+        return 0
+
+    with mock.patch.object(
+        ctypes.windll.ntdll, "RtlGetVersion", side_effect=version_query
+    ):
+        main_mod = importlib.import_module("main")
+    registry = FakeWinreg()
+    monkeypatch.setattr(sys.modules["scanner"], "winreg", registry)
+    monkeypatch.setattr(sys.modules["cleaner"], "winreg", registry)
+    return main_mod
 
 
 # Pytest fixtures
@@ -505,7 +536,11 @@ def tmp_test_dir():
 def mock_logger(monkeypatch):
     """Create a mock logger for tests."""
     logger = mock.MagicMock()
-    monkeypatch.setattr("logging.getLogger", lambda name: logger)
+
+    def _getlogger(name=None):
+        return logger
+
+    monkeypatch.setattr("logging.getLogger", _getlogger)
     return logger
 
 

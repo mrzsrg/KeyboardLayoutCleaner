@@ -29,7 +29,7 @@ class TestMutexRestartScenario:
         4. Новый процесс закрывает свой дескриптор существующего мьютекса
         5. Новый процесс успешно создаёт новый мьютекс
         """
-        mutex_name = r"Global\TestMutexRestart_{A3F8B2C1-7D4E-4A9B-8C6F-1E2D3F4A5B6C}"
+        mutex_name = r"Local\TestMutexRestart_{A3F8B2C1-7D4E-4A9B-8C6F-1E2D3F4A5B6C}"
 
         # Шаг 1: Старый процесс создаёт мьютекс
         h_old, err_old = _create_mutex(mutex_name)
@@ -64,7 +64,7 @@ class TestMutexRestartScenario:
         Демонстрация проблемы: если новый процесс не закрывает handle,
         мьютекс не освобождается.
         """
-        mutex_name = r"Global\TestMutexNoClose_{A3F8B2C1-7D4E-4A9B-8C6F-1E2D3F4A5B6C}"
+        mutex_name = r"Local\TestMutexNoClose_{A3F8B2C1-7D4E-4A9B-8C6F-1E2D3F4A5B6C}"
 
         # Старый процесс создаёт мьютекс
         h_old, _ = _create_mutex(mutex_name)
@@ -93,7 +93,7 @@ class TestMutexRestartScenario:
         Тест правильного алгоритма ожидания освобождения мьютекса.
         Использует тот же подход, что должен быть в main.py.
         """
-        mutex_name = r"Global\TestMutexPolling_{A3F8B2C1-7D4E-4A9B-8C6F-1E2D3F4A5B6C}"
+        mutex_name = r"Local\TestMutexPolling_{A3F8B2C1-7D4E-4A9B-8C6F-1E2D3F4A5B6C}"
 
         # Старый процесс создаёт мьютекс
         h_old, _ = _create_mutex(mutex_name)

@@ -41,7 +41,6 @@ TIMEOUTS: dict[str, int] = {
     "powershell_list": 20,  # layout_cleaner_list.ps1 (скан языков)
     "powershell_backup": 45,  # layout_cleaner_backup.ps1 (снимок языков)
     "powershell_cleanup": 45,  # cleanup/sync/restore списка языков
-    "powershell_welcome_sync": 45,  # Copy-UserInternationalSettingsToSystem
     "ctfmon_control": 20,  # остановка/запуск ctfmon
     "mutex_wait": 60,  # ожидание освобождения мьютекса при elevate
 }

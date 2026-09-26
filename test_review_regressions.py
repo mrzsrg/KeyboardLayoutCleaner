@@ -15,9 +15,11 @@ import pytest
 import backup
 import capabilities
 import cleaner
+import config
 import langlist
 import mutate
 import scanner
+import settings
 from conftest import FakeWinreg, _ensure_main, registry_modules
 
 
@@ -477,15 +479,6 @@ class TestDeleteLayoutCloudSyncOptIn:
             "_sync_language_list_via_powershell",
             lambda klid: (True, "SUCCESS"),
         )
-        # FIX-4: welcome-синхронизация убрана из delete_layout — spy для контроля
-        captured_calls: list[str] = []
-
-        def _welcome_spy() -> bool:
-            captured_calls.append("welcome")
-            return True
-
-        monkeypatch.setattr(cleaner, "sync_welcome_screen_settings", _welcome_spy)
-
         class _NoopSuspender:
             started = False
 
@@ -498,7 +491,6 @@ class TestDeleteLayoutCloudSyncOptIn:
         monkeypatch.setattr(cleaner, "CtfmonSuspender", _NoopSuspender)
 
         captured: dict = {}
-        captured["welcome_calls"] = captured_calls
 
         def stub_backup(registry_paths, backup_dir=None, report=None):
             captured["subkeys"] = [p["subkey"] for p in registry_paths]
@@ -574,17 +566,43 @@ class TestDeleteLayoutCloudSyncOptIn:
 
 
 # ---------------------------------------------------------------------------
-# FIX-4: Copy-UserInternationalSettingsToSystem убран из стандартного удаления
+# FIX-4 → решение владельца 26.09.2026: операция удалена из проекта целиком
 # ---------------------------------------------------------------------------
 
 
-class TestWelcomeSyncDecoupled:
-    """Удаление раскладки больше не изменяет Экран приветствия/новых юзеров."""
+class TestWelcomeSyncRemoved:
+    """Copy-UserInternationalSettingsToSystem удалена, а не спрятана в CLI.
+
+    Пока операция была отдельной командой, её можно было вернуть одной
+    строкой в реэкспорте ``cleaner.py``. Теперь возвращать нечего: нет ни
+    функции, ни права, ни PowerShell-скрипта, ни флага, ни ключа таймаута.
+    Проверки на отсутствие здесь намеренно жёсткие — именно отсутствие и
+    было целью решения.
+    """
 
     KLID = "d001dead"
 
-    def test_delete_layout_never_calls_welcome_sync(self, monkeypatch, tmp_path):
-        """Spy: welcome-синхронизация не вызывается, даже если есть права админа."""
+    def test_capability_is_gone(self):
+        assert not hasattr(capabilities.Capability, "WELCOME_SYNC")
+        assert "welcome_sync" not in {c.value for c in capabilities.Capability}
+
+    def test_function_is_gone(self):
+        assert not hasattr(settings, "sync_welcome_screen_settings")
+        assert not hasattr(cleaner, "sync_welcome_screen_settings")
+
+    def test_powershell_script_is_gone(self):
+        script = Path(__file__).parent / "scripts" / "layout_cleaner_sync_welcome.ps1"
+        assert not script.exists(), "скрипт синхронизации Экрана приветствия удалён"
+
+    def test_cli_flag_and_timeout_are_gone(self):
+        """CLI живёт под ``if __name__``, поэтому флаг проверяем по исходнику."""
+        source = (Path(__file__).parent / "cleaner.py").read_text(encoding="utf-8")
+        assert "--sync-welcome" not in source
+        assert "sync_welcome" not in source
+        assert "powershell_welcome_sync" not in config.TIMEOUTS
+
+    def test_delete_layout_report_has_no_welcome_fields(self, monkeypatch, tmp_path):
+        """Удаление по-прежнему ничего не пишет про Экран приветствия."""
         fake = FakeWinreg()
         fake.set(
             fake.HKEY_CURRENT_USER,
@@ -592,13 +610,12 @@ class TestWelcomeSyncDecoupled:
             values={"Enabled": 1},
         )
         harness = TestDeleteLayoutCloudSyncOptIn()
-        captured = harness._harness(monkeypatch, fake, tmp_path)
-        # Права админа НЕ должны включать welcome-sync (раньше включали).
+        harness._harness(monkeypatch, fake, tmp_path)
+        # Права админа больше не имеют никакого отношения к Экрану приветствия.
         monkeypatch.setattr(cleaner, "is_admin", lambda: True)
 
         result = cleaner.delete_layout(self.KLID)
 
-        assert captured["welcome_calls"] == []
         assert "welcome_screen_synced" not in result
         assert "welcome_screen_sync_detail" not in result
         assert result["success"] is True

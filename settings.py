@@ -1,17 +1,28 @@
 """
-settings.py — Облачная синхронизация языков и Экран приветствия (FIX-10, шаг 4).
+settings.py — политика облачной синхронизации языков (FIX-10, шаг 4).
 
 Последний кусок ``cleaner.py``, который не относится ни к бэкапу, ни к
 сопоставлению значений, ни к списку языков: политика синхронизации
-языковых параметров с облаком (``SettingSync\\Groups\\Language\\Enabled``) и
-отдельная необратимая операция ``Copy-UserInternationalSettingsToSystem``
-(FIX-4: она вынесена из стандартного удаления намеренно).
+языковых параметров с облаком (``SettingSync\\Groups\\Language\\Enabled``).
 
 Почему это отдельный модуль, а не «просто ещё функции в cleaner»:
 облачная синхронизация — единственная подсистема, которая меняет реестр
 помимо самого удаления, и она обязана быть opt-in (FIX-2). Смешанная с
 очисткой реестра, она визуально выглядит частью удаления, а это ровно то
 заблуждение, из-за которого блокировка однажды применялась безусловно.
+
+Здесь же была операция ``Copy-UserInternationalSettingsToSystem``
+(``sync_welcome_screen_settings``) — «применить текущий список языков к
+Экрану приветствия и профилю новых пользователей». Решение владельца
+26.09.2026 (Problems.MD §6, п.1): операция УДАЛЕНА, а не оставлена
+отдельной командой. Проверено на живых машинах — в ``HKU\\.DEFAULT`` лежит
+ровно тот же набор раскладок, что и у текущего пользователя (Win11 build
+26200 и Win10 build 19045), то есть чинить там нечего; на Windows 10
+командлета не существует вовсе, и приложение сообщало об этом ложным
+предупреждением о необратимости и голым ``FAILED``. Возвращать нельзя:
+команда переписывает весь набор international settings в ``HKU\\.DEFAULT``,
+а в бэкап входит оттуда только ``HKU\\.DEFAULT\\Keyboard Layout\\Preload`` —
+откат невозможен в принципе.
 
 Резолвер ветки sandbox-осведомлённый (FIX-2c) и обращается к общему
 ``mutate._sandbox_active`` через МОДУЛЬ, а не через ``from ... import``:
@@ -20,19 +31,13 @@ settings.py — Облачная синхронизация языков и Эк
 """
 
 import logging
-import subprocess
 import winreg
 
 import capabilities
 import mutate
-from applog import resource_path as resource_path
-from config import _SANDBOX_ROOT, TIMEOUTS
-from winproc import run_hidden
+from config import _SANDBOX_ROOT
 
 logger = logging.getLogger("layout_cleaner")
-
-# Путь к PowerShell-скриптам (FIX-20: единый источник истины).
-_PS_DIR = resource_path("scripts")
 
 # ---------------------------------------------------------------------------
 # Backup-only источник (FIX-2): состояние облачной синхронизации языков
@@ -189,64 +194,4 @@ def enable_language_sync() -> tuple[bool, str]:
     except OSError as exc:
         logger.warning("Не удалось включить синхронизацию языков: %s", exc)
         return False, f"Ошибка: {exc}"
-
-
-
-def sync_welcome_screen_settings() -> bool:
-    """
-    Применить текущий (чистый) список языков пользователя к Экрану приветствия
-    и Системным учетным записям.
-
-    ОТДЕЛЬНАЯ операция (FIX-4): из стандартного удаления убрана — команда
-    Copy-UserInternationalSettingsToSystem копирует ВЕСЬ набор international
-    settings (формат даты/времени, разделители, единицы измерения) в
-    HKU\\.DEFAULT и профиль новых пользователей. Эти ветки не бэкапятся,
-    поэтому откат невозможен в принципе. Вызывайте только по явному запросу
-    пользователя с предупреждением о необратимости.
-
-    Использует команду PowerShell Copy-UserInternationalSettingsToSystem,
-    которая копирует международные настройки текущего пользователя в профиль
-    по умолчанию (Winlogon) и для новых пользователей. Доступна только в
-    Windows 11+; требует прав администратора.
-
-    Returns
-    -------
-    bool
-        True если команда выполнена успешно, False при ошибке.
-    """
-    # FIX-29: необратимая операция, отдельное право. Класс защиты здесь
-    # наибольший из всех — откат невозможен в принципе, а не «сложен».
-    capabilities.require(
-        capabilities.Capability.WELCOME_SYNC, "sync_welcome_screen_settings"
-    )
-    script_path = _PS_DIR / "layout_cleaner_sync_welcome.ps1"
-    try:
-        res = run_hidden(
-            [
-                "powershell",
-                "-NoProfile",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-File",
-                str(script_path),
-            ],
-            capture_output=True,
-            text=True,
-            timeout=TIMEOUTS["powershell_welcome_sync"],
-        )
-        ok = res.returncode == 0
-        if ok:
-            logger.info(
-                "Настройки Экрана приветствия обновлены (чистый список языков)."
-            )
-        else:
-            logger.warning(
-                "Copy-UserInternationalSettingsToSystem: returncode=%s, stderr=%s",
-                res.returncode,
-                (res.stderr or "").strip()[:200],
-            )
-        return ok
-    except (subprocess.TimeoutExpired, OSError) as exc:
-        logger.warning("Не удалось обновить настройки Экрана приветствия: %s", exc)
-        return False
 

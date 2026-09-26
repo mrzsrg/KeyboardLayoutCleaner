@@ -46,10 +46,9 @@ class Capability(str, Enum):
     """Отдельные виды разрушительного доступа.
 
     Их несколько не для красоты: ``LANGUAGE_LIST`` опаснее остальных
-    (WinRT-API минует реестр, и песочница его не покрывает — см. FIX-25),
-    а ``WELCOME_SYNC`` необратим в принципе (FIX-4). Право на одно не
-    даёт права на другое: тесту, которому нужно подменить PowerShell, не
-    нужно разрешение останавливать ctfmon.
+    (WinRT-API минует реестр, и песочница его не покрывает — см. FIX-25).
+    Право на одно не даёт права на другое: тесту, которому нужно подменить
+    PowerShell, не нужно разрешение останавливать ctfmon.
     """
 
     #: Удаление/перезапись значений реестра (Preload, Substitutes, CTF, User Profile).
@@ -63,9 +62,6 @@ class Capability(str, Enum):
     INPUT_SERVICES = "input_services"
     #: Политика облачной синхронизации языков (SettingSync\Groups\Language).
     CLOUD_SYNC_POLICY = "cloud_sync_policy"
-    #: Copy-UserInternationalSettingsToSystem — переписывает HKU\.DEFAULT,
-    #: откат невозможен.
-    WELCOME_SYNC = "welcome_sync"
 
 
 class CapabilityDeniedError(RuntimeError):

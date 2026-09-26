@@ -1113,15 +1113,6 @@ class TestCapabilityModel:
         ):
             capabilities.require(capabilities.Capability.INPUT_SERVICES)
 
-    def test_welcome_sync_not_in_app_capabilities(self):
-        """Необратимая операция не входит в обычный набор прав.
-
-        Иначе обычный запуск приложения мог бы переписать HKU\\.DEFAULT
-        без явного --sync-welcome.
-        """
-        assert capabilities.Capability.WELCOME_SYNC not in capabilities.APP_CAPABILITIES
-        assert capabilities.Capability.WELCOME_SYNC in capabilities.Capability
-
     def test_dry_run_needs_no_capability(self):
         """delete=False — это чтение; право на мутацию не требуется.
 

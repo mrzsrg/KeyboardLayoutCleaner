@@ -232,9 +232,6 @@ from settings import (
 from settings import (
     is_language_sync_blocked as is_language_sync_blocked,
 )
-from settings import (
-    sync_welcome_screen_settings as sync_welcome_screen_settings,
-)
 from winproc import run_hidden
 
 # ---------------------------------------------------------------------------
@@ -1264,11 +1261,12 @@ def delete_layout(layout_id: str, block_cloud_sync: bool = False) -> dict[str, A
             result["language_sync_blocked"] = sync_blocked
             result["language_sync_block_detail"] = sync_block_detail
 
-            # FIX-4: шаг синхронизации Экрана приветствия убран из стандартного
-            # удаления — Copy-UserInternationalSettingsToSystem перезаписывает
-            # HKU\.DEFAULT и профиль новых пользователей (весь набор
-            # international settings), эти ветки не бэкапятся и откат
-            # невозможен. Операция доступна отдельно: CLI --sync-welcome.
+            # FIX-4: шаг синхронизации Экрана приветствия удалён из проекта
+            # полностью (решение владельца 26.09.2026, Problems.MD §6 п.1) —
+            # вместе с отдельной командой CLI. Причина та же:
+            # Copy-UserInternationalSettingsToSystem перезаписывает HKU\.DEFAULT
+            # и профиль новых пользователей (весь набор international
+            # settings), эти ветки не бэкапятся и откат невозможен.
 
             # Шаг 5: Верификация — повторная подчистка того, что служба могла
             # вернуть между шагами 3 и 4.
@@ -1467,7 +1465,7 @@ if __name__ == "__main__":
         "klid",
         nargs="?",
         default=None,
-        help="KLID раскладки, например 00000419 (не нужен для --sync-welcome)",
+        help="KLID раскладки, например 00000419",
     )
     parser.add_argument(
         "--plan", action="store_true", help="dry-run: показать план без изменений"
@@ -1480,16 +1478,6 @@ if __name__ == "__main__":
         action="store_true",
         help="блокировать облачную синхронизацию языков (opt-in)",
     )
-    parser.add_argument(
-        "--sync-welcome",
-        action="store_true",
-        help=(
-            "ОТДЕЛЬНАЯ необратимая операция: применить текущий список языков "
-            "к Экрану приветствия и профилю новых пользователей "
-            "(Copy-UserInternationalSettingsToSystem, Win11+, нужны права "
-            "администратора). ОТКАТ НЕВОЗМОЖЕН."
-        ),
-    )
     parser.add_argument("--json", action="store_true", help="вывести отчёт в JSON")
     args = parser.parse_args()
 
@@ -1499,24 +1487,8 @@ if __name__ == "__main__":
     if args.sandbox:
         enable_sandbox()
 
-    # FIX-4: --sync-welcome — СТРОГО отдельная операция. Удаление при ней
-    # не выполняется: раньше (черновик) флаг шёл ПОСЛЕ delete_layout, что
-    # превратило бы «декаплинг» в «удалить и ещё раз переписать профили».
-    if args.sync_welcome:
-        print(  # noqa: T201
-            "ВНИМАНИЕ: копирование настроек в Экран приветствия необратимо "
-            "(бэкап этих веток не создаётся)."
-        )
-        # FIX-29: право на необратимую операцию выдаётся только здесь — по
-        # явному флагу. В APP_CAPABILITIES его нет намеренно, чтобы обычный
-        # запуск приложения не мог переписать HKU\.DEFAULT.
-        capabilities.grant(capabilities.Capability.WELCOME_SYNC)
-        ok = sync_welcome_screen_settings()
-        print(f"sync_welcome: {'OK' if ok else 'FAILED'}")  # noqa: T201
-        raise SystemExit(0 if ok else 1)
-
     if not args.klid:
-        parser.error("укажите KLID раскладки (или используйте --sync-welcome)")
+        parser.error("укажите KLID раскладки")
 
     if args.plan:
         report = plan_layout_removal(args.klid)

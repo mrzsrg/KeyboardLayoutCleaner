@@ -108,7 +108,7 @@ keyboard-layout-cleaner/
 | `backup.py` | Экспорт/импорт `.reg`, проверка файла, список бэкапов, `_ROOT_CONST` |
 | `mutate.py` | Предикаты сопоставления, снимок и манифест FIX-6, сама мутация, резолверы веток |
 | `langlist.py` | Снимок списка языков, разбор, восстановление, весь PS-адаптер списка языков |
-| `settings.py` | `SettingSync\Groups\Language`, `Copy-UserInternationalSettingsToSystem` (FIX-4) |
+| `settings.py` | `SettingSync\Groups\Language` (FIX-2) |
 | `cleaner.py` | План, дрейф плана, `delete_layout`, отчётность, CTF-сервисы, CLI |
 
 Правило, общее для всех этих модулей: **обращение к общему состоянию

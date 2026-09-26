@@ -29,10 +29,12 @@ import tempfile
 import unittest
 import winreg
 from pathlib import Path
+from unittest import mock
 
 import pytest
 
 import cleaner
+import langlist
 import scanner
 
 TEST_ROOT = "Software\\KeyboardCleanerTest"
@@ -91,6 +93,37 @@ def _delete_test_tree() -> None:
             pass
 
     _delete_tree_recursive(winreg.HKEY_CURRENT_USER, TEST_ROOT)
+
+
+@contextlib.contextmanager
+def _no_live_language_list(detail: str = "NOCHANGE"):
+    """FIX-28: подмена PS-очистки — тест не трогает список языков.
+
+    `layout_cleaner_cleanup.ps1` внутри вызывает Set-WinUserLanguageList
+    -Force, который ЗАМЕНЯЕТ список языков пользователя целиком. В песочнице
+    это прикрывает флаг -Sandbox (FIX-25), но живые тесты (`@pytest.mark.live`)
+    в песочницу не входят — и уходили в настоящий PowerShell по живой
+    системе. `detail` повторяет то, что вернул бы скрипт: тесты проверяют
+    структуру плана, а не живой вывод PowerShell.
+
+    Подменяются ОБЕ ссылки: `cleaner._run_cleanup_script` (план удаления) и
+    `langlist._run_cleanup_script` (её же вызывает
+    `_sync_language_list_via_powershell` — по локальной ссылке модуля, минуя
+    реэкспорт в `cleaner`).
+    """
+    with (
+        mock.patch.object(
+            cleaner,
+            "_run_cleanup_script",
+            return_value=(True, detail, {"tips_removed": [], "languages_removed": []}),
+        ),
+        mock.patch.object(
+            langlist,
+            "_run_cleanup_script",
+            return_value=(True, detail, {"tips_removed": [], "languages_removed": []}),
+        ),
+    ):
+        yield
 
 
 class SandboxTestCase(unittest.TestCase):
@@ -429,14 +462,30 @@ class TestPhantomDeletionSimulation(SandboxTestCase):
         В реальных ветках совпадений нет => ничего не удаляется; бэкап
         создаётся (read-only); PowerShell-синхронизация даёт NOCHANGE
         (Set-WinUserLanguageList НЕ вызывается, профиль не меняется).
+
+        FIX-28: тест по замыслу «живой», но службы ввода он обязан оставить
+        в покое — иначе каждый прогон pytest перезапускает TSF у реального
+        пользователя и сбивает переключатель раскладок. Класс наследует
+        unittest.TestCase, поэтому фикстуры pytest здесь недоступны и
+        подмена делается через mock.patch (как в TestInputServicesRescue).
         """
         created_backups = []
         try:
-            report = cleaner.delete_layout(PHANTOM_KLID)
+            with (
+                mock.patch.object(cleaner, "_stop_ctfmon", return_value=True),
+                mock.patch.object(cleaner, "_start_ctfmon", return_value=True),
+                _no_live_language_list(),
+            ):
+                report = cleaner.delete_layout(PHANTOM_KLID)
             if report.get("backup_path"):
                 created_backups.append(report["backup_path"])
             if report.get("langlist_backup_path"):
                 created_backups.append(report["langlist_backup_path"])
+            # FIX-6: sidecar-манифест лежит рядом с .reg и без явного удаления
+            # остаётся в backups/ навсегда (именно так там появился один
+            # «сиротский» .manifest.json). Убираем и его.
+            if report.get("manifest_path"):
+                created_backups.append(report["manifest_path"])
             assert report["backup_path"]
             assert Path(report["backup_path"]).exists()
             assert not report["success"]  # фантом в системе отсутствует
@@ -460,7 +509,8 @@ class TestDryRunAndBackupLive(SandboxTestCase):
     """Dry-run и JSON-бэкап списка языков на живой системе (read-only)."""
 
     def test_plan_layout_removal_phantom(self) -> None:
-        plan = cleaner.plan_layout_removal(PHANTOM_KLID)
+        with _no_live_language_list():
+            plan = cleaner.plan_layout_removal(PHANTOM_KLID)
         assert plan["klid"] == PHANTOM_KLID
         assert "HKCU\\Keyboard Layout\\Preload" in plan["branches"]
         assert len(plan["branches"]) == 6
@@ -472,7 +522,8 @@ class TestDryRunAndBackupLive(SandboxTestCase):
     def test_plan_layout_removal_ignores_sandbox_tree(self) -> None:
         """План затрагивает только реальные ветки: sandbox-ключ не попадает."""
         _create_test_tree()
-        plan = cleaner.plan_layout_removal(PHANTOM_KLID)
+        with _no_live_language_list():
+            plan = cleaner.plan_layout_removal(PHANTOM_KLID)
         preload = plan["branches"]["HKCU\\Keyboard Layout\\Preload"]["values"]
         assert preload == []
         assert plan["branches"].get("HKCU\\Software\\KeyboardCleanerTest") is None
@@ -569,6 +620,377 @@ class TestCtfProfileCleanup(SandboxTestCase):
             + self.DEEP_GUID
             + "\\00000000"
         )
+
+
+def _raise_oserror():
+    """Заглушка конца перечисления подключей (winreg.EnumKey кидает OSError)."""
+    raise OSError("no more keys")
+
+
+class TestSwitcherConsistency:
+    """FIX-26: сверка списка языков с панелью переключения.
+
+    Симптом: язык виден в Параметрах языка («установлен»), но отсутствует
+    в переключателе, и помогает только перезагрузка. Обе стороны читаются
+    из РАЗНЫХ хранилищ, поэтому расхождение возможно и раньше было
+    безымянным.
+    """
+
+    @staticmethod
+    def _patch(monkeypatch, list_klids, preload_klids, ctf_names):
+        monkeypatch.setattr(
+            scanner,
+            "_get_language_list_from_powershell",
+            lambda: [
+                {"LanguageTag": "xx", "KeyboardLayoutId": k} for k in list_klids
+            ],
+        )
+        monkeypatch.setattr(
+            scanner,
+            "_get_preload_keys",
+            lambda root, path: {k: k for k in preload_klids},
+        )
+
+        class _Key:
+            def __init__(self, names):
+                self._names = names
+                self._idx = 0
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+        monkeypatch.setattr(
+            scanner.winreg, "OpenKey", lambda *a, **k: _Key(ctf_names)
+        )
+        # EnumKey — функция уровня модуля winreg, а не метод ключа, поэтому
+        # подменяем её отдельно, а не через объект-ключ.
+        monkeypatch.setattr(
+            scanner.winreg,
+            "EnumKey",
+            lambda key, idx: (
+                ctf_names[idx] if idx < len(ctf_names) else _raise_oserror()
+            ),
+        )
+
+    def test_consistent_system_reports_nothing(self, monkeypatch):
+        self._patch(
+            monkeypatch,
+            list_klids=["00000419", "00000409"],
+            preload_klids=["00000419", "00000409"],
+            ctf_names=["0x00000419", "0x00000409"],
+        )
+        report = scanner.check_switcher_consistency()
+        assert report["tips_without_preload"] == []
+        assert report["preload_without_tip"] == []
+        assert report["ctf_missing"] == []
+        assert scanner.is_switcher_consistent(report) is True
+
+    def test_tip_in_list_but_absent_from_preload(self, monkeypatch):
+        """Язык установлен, но переключатель его не покажет."""
+        self._patch(
+            monkeypatch,
+            list_klids=["00000419", "00000409"],
+            preload_klids=["00000419"],
+            ctf_names=["0x00000419"],
+        )
+        report = scanner.check_switcher_consistency()
+        assert report["tips_without_preload"] == ["00000409"]
+        assert scanner.is_switcher_consistent(report) is False
+
+    def test_stale_preload_entry(self, monkeypatch):
+        """Остаток удалённой раскладки в Preload."""
+        self._patch(
+            monkeypatch,
+            list_klids=["00000419"],
+            preload_klids=["00000419", "d001dead"],
+            ctf_names=["0x00000419"],
+        )
+        report = scanner.check_switcher_consistency()
+        assert report["preload_without_tip"] == ["d001dead"]
+        assert scanner.is_switcher_consistent(report) is False
+
+    def test_ctf_missing_is_reported_but_not_fatal(self, monkeypatch):
+        """Нет ветки CTF — отмечаем, но операцию не объявляем провалом.
+
+        CTF пересобирает система при входе; считать это поломкой значило бы
+        пугать пользователя там, где Windows и так всё починит.
+        """
+        self._patch(
+            monkeypatch,
+            list_klids=["00000419", "00000409"],
+            preload_klids=["00000419", "00000409"],
+            ctf_names=["0x00000419"],
+        )
+        report = scanner.check_switcher_consistency()
+        # FIX-27: полный KLID, а не «голый» LANGID «0409» — значение уходит
+        # в текст диалога рядом с tips_without_preload/preload_without_tip,
+        # где все остальные элементы записаны как 8-HEX KLID.
+        assert report["ctf_missing"] == ["00000409"]
+        # Переключатель при этом согласован: Preload в порядке.
+        assert scanner.is_switcher_consistent(report) is True
+
+    def test_ctf_missing_uses_same_format_as_other_fields(self, monkeypatch):
+        """Все три поля отчёта — в одном формате KLID (FIX-27)."""
+        self._patch(
+            monkeypatch,
+            list_klids=["00000419", "00000409"],
+            preload_klids=["00000419", "00000409"],
+            ctf_names=["0x00000419"],
+        )
+        report = scanner.check_switcher_consistency()
+        for field, values in report.items():
+            for value in values:
+                assert scanner._KLID_RE.match(value), f"{field}: {value} не KLID"
+
+    def test_malformed_ctf_names_ignored(self, monkeypatch):
+        self._patch(
+            monkeypatch,
+            list_klids=["00000419"],
+            preload_klids=["00000419"],
+            ctf_names=["0x00000419", "junk", "0xZZZZ"],
+        )
+        report = scanner.check_switcher_consistency()
+        assert report["ctf_missing"] == []
+
+    def test_empty_and_missing_reports_are_consistent(self):
+        assert scanner.is_switcher_consistent(None) is True
+        assert scanner.is_switcher_consistent({}) is True
+        assert scanner.is_switcher_consistent({"tips_without_preload": []}) is True
+        assert (
+            scanner.is_switcher_consistent({"preload_without_tip": ["00000409"]})
+            is False
+        )
+
+
+class TestLanguageListSandboxIsolation:
+    """FIX-25: песочница изолирует реестр, но НЕ WinRT-API списка языков.
+
+    Set-WinUserLanguageList минует реестр, поэтому песочница его не
+    изолирует. Без явного запрета sandbox-тест или CLI --sandbox
+    переустановили бы РЕАЛЬНЫЙ список языков пользователя — это и есть
+    причина, по которой флаги -Sandbox добавлены во все три PS-скрипта.
+    """
+
+    @staticmethod
+    def _cmd(monkeypatch, sandbox: bool):
+        import langlist
+
+        captured: dict = {}
+
+        def fake_run(cmd, **kw):
+            captured["cmd"] = list(cmd)
+            return mock.Mock(returncode=0, stdout="SUCCESS", stderr="")
+
+        monkeypatch.setattr(langlist, "run_hidden", fake_run)
+        monkeypatch.setattr(langlist, "is_sandbox_enabled", lambda: sandbox)
+        return captured
+
+    def test_restore_passes_sandbox_flag(self, tmp_path, monkeypatch):
+        import langlist
+
+        jp = tmp_path / "l.json"
+        jp.write_text(
+            '[{"LanguageTag":"ru","InputMethodTips":["0419:00000419"]}]',
+            encoding="utf-8",
+        )
+        captured = self._cmd(monkeypatch, True)
+        langlist.restore_language_list(jp)
+        assert "-Sandbox" in captured["cmd"]
+        # Флаг обязан идти ПОСЛЕ -JsonPath, иначе PS1 его не увидит.
+        cmd = captured["cmd"]
+        assert cmd.index("-Sandbox") > cmd.index("-JsonPath")
+
+    def test_restore_without_sandbox_has_no_flag(self, tmp_path, monkeypatch):
+        import langlist
+
+        jp = tmp_path / "l.json"
+        jp.write_text(
+            '[{"LanguageTag":"ru","InputMethodTips":["0419:00000419"]}]',
+            encoding="utf-8",
+        )
+        captured = self._cmd(monkeypatch, False)
+        langlist.restore_language_list(jp)
+        assert "-Sandbox" not in captured["cmd"]
+
+    def test_cleanup_passes_sandbox_flag(self, monkeypatch):
+        import langlist
+
+        captured = self._cmd(monkeypatch, True)
+        langlist._run_cleanup_script("d001dead", apply=True)
+        assert "-Sandbox" in captured["cmd"]
+
+    def test_sync_passes_sandbox_flag(self, monkeypatch):
+        import langlist
+
+        captured = self._cmd(monkeypatch, True)
+        langlist._sync_language_list_via_powershell()
+        assert "-Sandbox" in captured["cmd"]
+
+    @pytest.mark.parametrize(
+        "script",
+        [
+            "layout_cleaner_restore.ps1",
+            "layout_cleaner_cleanup.ps1",
+            "layout_cleaner_sync.ps1",
+        ],
+    )
+    def test_every_language_script_supports_sandbox(self, script):
+        """Каждый PS-скрипт списка языков обязан принимать -Sandbox.
+
+        Скрипт без флага упал бы с ошибкой параметров, и песочница
+        «сломалась бы» громче, чем просто не сделала работу.
+        """
+        import langlist
+
+        text = (langlist._PS_DIR / script).read_text(encoding="utf-8")
+        assert "[switch]$Sandbox" in text
+        assert "SANDBOX_SKIPPED" in text
+
+
+class TestCtfmonSandboxIsolation:
+    """FIX-28: песочница обязана щадить ЖИВЫЕ процессы ввода.
+
+    Реестр песочница изолирует (_SANDBOX_ROOT), WinRT-API заблокированы
+    флагом -Sandbox (FIX-25). А вот остановка ctfmon — единственное
+    действие приложения, которое мимо песочницы попадало прямо в процессы
+    ТЕКУЩЕГО пользователя: sandbox-тесты вызывают delete_layout, а тот
+    оборачивает всю работу в CtfmonSuspender.
+
+    Симптом, который это давало на живой машине: каждый полный прогон
+    pytest убивал ctfmon.exe/TextInputHost.exe, Windows пересобирал кеш TSF,
+    и при расхождении Preload / User Profile / CTF\\Assemblies раскладка
+    пропадала из переключателя — ровно то, что пользователь наблюдал
+    во время тестов. Реестр и WinRT при этом были изолированы, поэтому
+    виновник не попадал ни в один из прежних барьеров.
+    """
+
+    @staticmethod
+    def _spy(monkeypatch):
+        """Подменить управление ctfmon списском вызовов."""
+        calls: list[str] = []
+
+        def _stop() -> bool:
+            calls.append("stop")
+            return True
+
+        def _start() -> bool:
+            calls.append("start")
+            return True
+
+        monkeypatch.setattr(cleaner, "_stop_ctfmon", _stop)
+        monkeypatch.setattr(cleaner, "_start_ctfmon", _start)
+        return calls
+
+    def test_sandbox_does_not_stop_live_ctfmon(self, monkeypatch):
+        calls = self._spy(monkeypatch)
+        monkeypatch.setattr(cleaner, "is_sandbox_enabled", lambda: True)
+        with cleaner.CtfmonSuspender() as suspender:
+            assert suspender.skipped is True
+        assert calls == [], f"песочница тронула живые процессы ввода: {calls}"
+
+    def test_sandbox_does_not_restart_ctfmon_either(self, monkeypatch):
+        """__exit__ обязан вернуться ДО _start_ctfmon, а не после."""
+        calls = self._spy(monkeypatch)
+        monkeypatch.setattr(cleaner, "is_sandbox_enabled", lambda: True)
+        with cleaner.CtfmonSuspender() as suspender:
+            pass
+        assert suspender.started is None
+        assert calls == []
+
+    def test_sandbox_exit_skips_start_even_on_exception(self, monkeypatch):
+        calls = self._spy(monkeypatch)
+        monkeypatch.setattr(cleaner, "is_sandbox_enabled", lambda: True)
+        with pytest.raises(RuntimeError), cleaner.CtfmonSuspender():
+            raise RuntimeError("сбой внутри блока")
+        assert calls == [], f"песочница перезапустила живую службу ввода: {calls}"
+
+    def test_sandbox_writes_no_suspension_marker(self, monkeypatch, tmp_path):
+        """Маркер FIX-13 поднимает ctfmon при следующем старте приложения.
+
+        В песочнице его создавать нельзя: он заставил бы живое приложение
+        перезапустить службу ввода после песочничного прогона.
+        """
+        self._spy(monkeypatch)
+        monkeypatch.setattr(cleaner, "is_sandbox_enabled", lambda: True)
+        monkeypatch.setattr(cleaner, "_input_suspended_marker_path", tmp_path / "m")
+        with cleaner.CtfmonSuspender():
+            pass
+        assert not (tmp_path / "m").exists()
+
+    def test_real_mode_still_stops_and_restarts(self, monkeypatch):
+        """Вне песочницы поведение не меняется — это основной рабочий путь."""
+        calls = self._spy(monkeypatch)
+        monkeypatch.setattr(cleaner, "is_sandbox_enabled", lambda: False)
+        with cleaner.CtfmonSuspender() as suspender:
+            assert suspender.skipped is False
+        assert calls == ["stop", "start"]
+        assert suspender.started is True
+
+    def test_real_activate_sandbox_blocks_ctfmon(self):
+        """Проверка на РЕАЛЬНОМ activate_sandbox(), а не на подмене флага.
+
+        Список тестов (test_manifest_drift.py) и локальный запуск различаются
+        путём включения песочницы, поэтому тест на подменённом предикате
+        не защищал бы от регрессии в реальном переключателе.
+        """
+        calls: list[str] = []
+        orig_stop, orig_start = cleaner._stop_ctfmon, cleaner._start_ctfmon
+        cleaner._stop_ctfmon = lambda: calls.append("stop") or True
+        cleaner._start_ctfmon = lambda: calls.append("start") or True
+        try:
+            cleaner.activate_sandbox()
+            try:
+                import config
+
+                assert config.is_sandbox_enabled() is True
+                with cleaner.CtfmonSuspender() as suspender:
+                    assert suspender.skipped is True
+            finally:
+                cleaner.deactivate_sandbox()
+        finally:
+            cleaner._stop_ctfmon, cleaner._start_ctfmon = orig_stop, orig_start
+        assert calls == [], f"activate_sandbox() не защитил живые процессы: {calls}"
+
+    def test_delete_layout_under_sandbox_leaves_ctfmon_alone(self, monkeypatch):
+        """Сквозная регрессия: конвейер удаления не трогает живой ctfmon.
+
+        Именно этот путь раньше убивал ctfmon у пользователя на каждом
+        прогоне pytest.
+        """
+        calls = self._spy(monkeypatch)
+        cleaner.activate_sandbox()
+        try:
+            _create_test_tree()
+            cleaner.delete_layout(PHANTOM_KLID)
+        finally:
+            cleaner.deactivate_sandbox()
+            _delete_test_tree()
+        assert calls == [], f"delete_layout в песочнице убил живые процессы: {calls}"
+
+    def test_session_guard_blocks_live_input_services(self, monkeypatch):
+        """Барьер conftest.py обязан быть активен — иначе всё выше — фикция.
+
+        Без него забытая подмена в любом новом тесте снова убьёт службу
+        ввода у того, кто запустил pytest. Проверяем именно отказ: тихий
+        no-op пропустил бы утечку дальше незаметно.
+        """
+        from conftest import LiveInputServiceLeakError
+
+        # Никаких собственных подмен: только autouse-фикстура conftest.
+        assert callable(cleaner._stop_ctfmon)
+        with pytest.raises(LiveInputServiceLeakError):
+            cleaner._stop_ctfmon()
+        with pytest.raises(LiveInputServiceLeakError):
+            cleaner._start_ctfmon()
+
+    def test_session_guard_redirects_suspension_marker(self, tmp_path):
+        """Маркер FIX-13 не должен попадать в реальный каталог приложения."""
+        marker = cleaner._input_suspended_marker_path()
+        assert str(marker).startswith(str(tmp_path.parent)) or "Temp" in str(marker)
+        assert "KeyboardLayoutCleaner" not in str(marker)
 
 
 if __name__ == "__main__":

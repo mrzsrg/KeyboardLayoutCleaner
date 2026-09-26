@@ -75,6 +75,7 @@ from config import (
     __version__,
     disable_sandbox,
     enable_sandbox,
+    is_sandbox_enabled,
 )
 
 # FIX-10 (шаг 3): список языков и PS-адаптер вынесены в langlist.py;
@@ -523,8 +524,35 @@ class CtfmonSuspender:
     def __init__(self) -> None:
         # Результат запуска ctfmon — для отчёта delete_layout (ctfmon_started).
         self.started: bool | None = None
+        # FIX-28: True — в песочнице службы ввода не трогались (см. __enter__).
+        self.skipped: bool = False
 
     def __enter__(self) -> "CtfmonSuspender":
+        # FIX-28 (P1, песочница не изолировала ЖИВЫЕ процессы).
+        #
+        # Остановка ctfmon — единственное действие приложения, которое песочница
+        # НЕ умела изолировать: реестр уводится под _SANDBOX_ROOT, WinRT-API
+        # заблокированы флагом -Sandbox (FIX-25), а вот
+        # `Stop-Process -Name ctfmon -Force` бьёт по процессам ТЕКУЩЕГО
+        # пользователя. sandbox-тест (TestPhantomDeletionSimulation,
+        # TestDryRunAndBackupLive) вызывал delete_layout, то есть каждый
+        # полный прогон pytest УБИВАЛ живой ctfmon.exe и TextInputHost.exe.
+        #
+        # Это и есть наблюдавшийся пользователем симптом: во время прогонов
+        # тестов пропадала русская раскладка. ctfmon владеет кешем TSF в ОЗУ;
+        # его убийство заставляет Windows пересобирать кеш из реестра при
+        # следующем запуске, и если Preload / User Profile / CTF\Assemblies в
+        # этот момент расходятся, пересборка молча теряет раскладку — при том
+        # что в Параметрах языка она остаётся «установленной».
+        #
+        # В песочнице останавливать нечего: мутации идут в изолированные
+        # ветки, живой кеш TSF к ним отношения не имеет.
+        if is_sandbox_enabled():
+            self.skipped = True
+            logger.info(
+                "Песочница: службы ввода (ctfmon/TextInputHost) не останавливаются"
+            )
+            return self
         if _stop_ctfmon():
             # FIX-13: маркер «службы ввода остановлены». Если процесс будет
             # убит до __exit__ (крестик при daemon-потоке, падение, kill),
@@ -544,6 +572,11 @@ class CtfmonSuspender:
         exc_val: BaseException | None,
         exc_tb: Any | None,
     ) -> None:
+        # FIX-28: в песочнице ничего не останавливалось — запускать нечего.
+        # Возврат до _start_ctfmon() обязателен: иначе «восстановление» после
+        # песочницы само перезапускало бы службу ввода у живого пользователя.
+        if self.skipped:
+            return
         self.started = _start_ctfmon()
         # Штатное завершение: маркер больше не нужен (FIX-13).
         with contextlib.suppress(OSError):

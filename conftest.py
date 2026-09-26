@@ -620,3 +620,102 @@ def patched_winreg(monkeypatch, fake_winreg):
     monkeypatch.setattr("scanner.winreg", fake_winreg)
     monkeypatch.setattr("cleaner.winreg", fake_winreg)
     return fake_winreg
+
+
+# ---------------------------------------------------------------------------
+# FIX-28: запрет тестам трогать ЖИВЫЕ службы ввода
+# ---------------------------------------------------------------------------
+
+
+class LiveInputServiceLeakError(RuntimeError):
+    """Тест дошёл до управления ctfmon/TextInputHost на живой машине."""
+
+
+def _make_input_service_guard(name: str):
+    def _refuse() -> bool:
+        raise LiveInputServiceLeakError(
+            f"Тест вызвал cleaner.{name}() — это остановило бы/запустило "
+            "ЖИВОЙ ctfmon.exe у пользователя, запустившего pytest. "
+            "Подмените cleaner._stop_ctfmon / _start_ctfmon в этом тесте."
+        )
+
+    return _refuse
+
+
+@pytest.fixture(autouse=True)
+def _forbid_live_input_services(monkeypatch):
+    """Ни один тест не должен останавливать ctfmon/TextInputHost (FIX-28).
+
+    Песочница изолирует реестр и блокирует WinRT-API, но управление
+    процессами ввода мимо неё не проходит: `_stop_ctfmon` выполняет
+    `Stop-Process -Name ctfmon -Force`. Каждый прогон pytest, где хоть один
+    тест забыл подменить эти функции, УБИВАЛ службу ввода у разработчика.
+
+    Пользователь это наблюдал: во время прогонов тестов пропадала русская
+    раскладка. ctfmon владеет кешем TSF в ОЗУ; после его убийства Windows
+    пересобирает кеш из реестра, и при расхождении Preload / User Profile /
+    CTF\\Assemblies пересборка молча теряет раскладку.
+
+    Раньше каждая подмена была делом отдельного теста, и одна забытая
+    строка (FIX-27, `restore_backup`) стоила реальной поломки. Барьер
+    поэтому.session-wide и ПАДАЕТ, а не молчит: утечка обязана быть видна
+    немедленно и адресно, а не через сломанную раскладку у человека.
+    """
+    import cleaner
+
+    monkeypatch.setattr(cleaner, "_stop_ctfmon", _make_input_service_guard("_stop_ctfmon"))
+    monkeypatch.setattr(cleaner, "_start_ctfmon", _make_input_service_guard("_start_ctfmon"))
+    # Маркер FIX-13 не должен попадать в реальный каталог приложения.
+    monkeypatch.setattr(
+        cleaner,
+        "_input_suspended_marker_path",
+        lambda: Path(tempfile.gettempdir()) / "klc_pytest_input_suspended.marker",
+    )
+
+
+# ---------------------------------------------------------------------------
+# FIX-28 (продолжение): запрет тестам вызывать WinRT-API списка языков
+# ---------------------------------------------------------------------------
+
+# Скрипты, внутри которых живёт Set-WinUserLanguageList. -Force ЗАМЕНЯЕТ список
+# языков пользователя целиком, поэтому запуск такого скрипта из теста без
+# флага -Sandbox — прямой вызов по живому списку.
+_LANGUAGE_LIST_SCRIPTS = (
+    "layout_cleaner_restore.ps1",
+    "layout_cleaner_cleanup.ps1",
+    "layout_cleaner_sync.ps1",
+)
+
+
+class LiveLanguageListLeakError(RuntimeError):
+    """Тест дошёл до Set-WinUserLanguageList на живой машине."""
+
+
+def _make_language_list_guard(original):
+    def _guarded(cmd, *args, **kwargs):
+        argv = [str(c) for c in cmd] if isinstance(cmd, (list, tuple)) else [str(cmd)]
+        joined = " ".join(argv)
+        if any(s in joined for s in _LANGUAGE_LIST_SCRIPTS) and "-Sandbox" not in argv:
+            raise LiveLanguageListLeakError(
+                f"Тест запустил {joined!r} без -Sandbox — это вызвало бы "
+                "Set-WinUserLanguageList -Force и ЗАМЕНИЛО бы реальный "
+                "список языков пользователя. Подмените langlist.run_hidden "
+                "в этом тесте."
+            )
+        return original(cmd, *args, **kwargs)
+
+    return _guarded
+
+
+@pytest.fixture(autouse=True)
+def _forbid_live_language_list(monkeypatch):
+    """Ни один тест не должен вызывать WinRT-API списка языков (FIX-28).
+
+    Флаг -Sandbox (FIX-25) защищает песочницу, но НЕ защищает обычный тест,
+    который случайно прогоняет restore_language_list() без подмены
+    run_hidden. Такой вызов заменяет список языков пользователя целиком —
+    ровно тот механизм, который несколько раз стирал русскую раскладку.
+    """
+    import langlist
+
+    monkeypatch.setattr(langlist, "run_hidden", _make_language_list_guard(langlist.run_hidden))

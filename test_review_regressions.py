@@ -13,6 +13,7 @@ from unittest import mock
 import pytest
 
 import backup
+import capabilities
 import cleaner
 import langlist
 import mutate
@@ -385,6 +386,17 @@ class TestDeleteLayoutBackupGuard:
 
 class TestSettingsyncGroupsBackupOnly:
     """Groups\\Language — backup-only источник: в бэкапе, вне мутаций."""
+    @pytest.fixture(autouse=True)
+    def _allow_destructive(self):
+        """FIX-29: тест TestSettingsyncGroupsBackupOnly работает С РЕАЛЬНЫМИ разрушительными путями.
+
+        Право выдаётся явно, чтобы читатель теста видел: здесь тест
+        действительно пишет в реестр/вызывает PowerShell. Раньше это было
+        неявно — достаточно было забыть подмену, и тест писал в живую
+        систему (FIX-28).
+        """
+        capabilities.grant(capabilities.Capability.CLOUD_SYNC_POLICY)
+
 
     def test_never_in_mutation_matrix(self):
         """Состояние синхронизации не подлежит «очистке» (только API)."""
@@ -436,6 +448,17 @@ class TestSettingsyncGroupsBackupOnly:
 
 class TestDeleteLayoutCloudSyncOptIn:
     """FIX-2/Находка A: блокировка облака при удалении — только по согласию."""
+    @pytest.fixture(autouse=True)
+    def _allow_destructive(self):
+        """FIX-29: тест TestDeleteLayoutCloudSyncOptIn работает С РЕАЛЬНЫМИ разрушительными путями.
+
+        Право выдаётся явно, чтобы читатель теста видел: здесь тест
+        действительно пишет в реестр/вызывает PowerShell. Раньше это было
+        неявно — достаточно было забыть подмену, и тест писал в живую
+        систему (FIX-28).
+        """
+        capabilities.grant(capabilities.Capability.CLOUD_SYNC_POLICY)
+
 
     KLID = "d001dead"
 
@@ -706,6 +729,18 @@ class TestScanCleanParity:
     (scanner._normalize_klid_token / _TIP_KLID_RE / LAYOUT_MAP <->
     cleaner._klid_variants / _TIP_KLID_RE / HKL-пересчёт).
     """
+    @pytest.fixture(autouse=True)
+    def _allow_destructive(self):
+        """FIX-29: тест TestScanCleanParity работает С РЕАЛЬНЫМИ разрушительными путями.
+
+        Право выдаётся явно, чтобы читатель теста видел: здесь тест
+        действительно пишет в реестр/вызывает PowerShell. Раньше это было
+        неявно — достаточно было забыть подмену, и тест писал в живую
+        систему (FIX-28).
+        """
+        capabilities.grant(capabilities.Capability.REGISTRY_MUTATE,
+            capabilities.Capability.LANGUAGE_LIST)
+
 
     BR_PRELOAD = "Keyboard Layout\\Preload"
     BR_SUBST = "Keyboard Layout\\Substitutes"

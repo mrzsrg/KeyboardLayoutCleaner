@@ -23,6 +23,7 @@ import winreg
 from pathlib import Path
 from typing import Any
 
+import capabilities
 import winapi
 from applog import get_app_dir
 from applog import resource_path as resource_path
@@ -578,6 +579,11 @@ def restore_registry_backup(reg_path: str | Path) -> dict[str, Any]:
     dict
         ``{"ok": bool, "detail": str, "elevated": bool, "needs_admin": bool}``
     """
+    # FIX-29: reg import пишет в реестр мимо winreg, поэтому песочница
+    # зависит только от подмены run_hidden. Право — независимый барьер.
+    capabilities.require(
+        capabilities.Capability.REG_IMPORT, "restore_registry_backup"
+    )
     path = Path(reg_path)
     if not path.is_file():
         return {

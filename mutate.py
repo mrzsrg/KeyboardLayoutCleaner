@@ -27,6 +27,7 @@ from typing import Any
 # значение, и подмена в тестах или в backup перестала бы влиять на mutate —
 # тот самый «молчаливый мок», который FIX-19 и шаг 1 уже ловили дважды.
 import backup
+import capabilities
 import layout_ids
 import scanner
 from config import _SANDBOX_ROOT, __version__, is_sandbox_enabled
@@ -73,6 +74,17 @@ _MAX_CLEAN_DEPTH = 6
 # ---------------------------------------------------------------------------
 # Sandbox-осведомлённые резолверы веток
 # ---------------------------------------------------------------------------
+def _require_mutation(delete: bool, where: str) -> None:
+    """FIX-29: при ``delete=False`` функция только читает — право не нужно.
+
+    Иначе право пришлось бы требовать и в dry-run, который по определению
+    безопасен: планирование удаления должно работать всегда, в том числе в
+    тестах, которые как раз и проверяют, что план построен.
+    """
+    if delete:
+        capabilities.require(capabilities.Capability.REGISTRY_MUTATE, where)
+
+
 def _sandbox_active() -> bool:
     """Активен ли sandbox-режим (config-флаг или окружение)."""
     return is_sandbox_enabled()
@@ -422,6 +434,12 @@ def _delete_registry_value(
     value_name : str, optional
         Имя значения. Если ``None`` — не удаляем ничего (только проверка).
     """
+    # FIX-29: право на мутацию реестра. Проверка ЗДЕСЬ, а не у вызывающих:
+    # это единственная точка, через которую проходят все DeleteValue.
+    if value_name is not None:
+        capabilities.require(
+            capabilities.Capability.REGISTRY_MUTATE, "_delete_registry_value"
+        )
     try:
         # KEY_READ | KEY_WRITE достаточно для EnumValue/DeleteValue/DeleteKey;
         # KEY_ALL_ACCESS может упасть с PermissionError на защищённых ключах
@@ -471,6 +489,8 @@ def _clean_preload_keys(
         Список удалённых имён значений.
     """
     deleted: list[str] = []
+    # FIX-29: мутация требует права; при delete=False только чтение.
+    _require_mutation(delete, '_clean_preload_keys')
     # Прямая ветка: hex-формы без «голого» десятичного LANGID. Иначе
     # значение "1049" в Preload удалялось бы при чистке 00000419 (FIX-22).
     variants = _klid_hex_forms(layout_klid)
@@ -538,6 +558,8 @@ def _clean_substitutes_keys(
         Список удалённых имён значений.
     """
     deleted: list[str] = []
+    # FIX-29: мутация требует права; при delete=False только чтение.
+    _require_mutation(delete, '_clean_substitutes_keys')
     try:
         # KEY_READ | KEY_WRITE достаточно для EnumValue/DeleteValue;
         # KEY_ALL_ACCESS может упасть с PermissionError на защищённых ключах.
@@ -736,6 +758,8 @@ def _clean_branch_recursive(
         ``<подключи>\\<имя значения>`` (для корневого уровня — просто имя).
     """
     deleted: list[str] = []
+    # FIX-29: мутация требует права; при delete=False только чтение.
+    _require_mutation(delete, '_clean_branch_recursive')
     variants = _klid_variants(layout_klid)
     _walk_branch_recursive(
         root_key,
@@ -780,6 +804,10 @@ def _subtree_is_empty(root_key: int, key_path: str) -> bool:
 
 def _delete_subtree(root_key: int, key_path: str) -> bool:
     """Рекурсивно удалить ключ реестра со всеми подключами и значениями."""
+    # FIX-29: отдельный примитив, минующий _delete_registry_value.
+    capabilities.require(
+        capabilities.Capability.REGISTRY_MUTATE, "_delete_subtree"
+    )
     try:
         # KEY_READ | KEY_WRITE достаточно (EnumKey/DeleteKey); KEY_ALL_ACCESS
         # может упасть на защищённых подключях даже при достаточных правах.
@@ -867,6 +895,8 @@ def _clean_intl_profile(
         return []
 
     deleted: list[str] = []
+    # FIX-29: мутация требует права; при delete=False только чтение.
+    _require_mutation(delete, '_clean_intl_profile')
     for sub in doomed:
         profile_sub = f"{subkey_path}\\{sub}"
         # 1) Точечная очистка СТРОГО записей layout_klid внутри профиля
@@ -994,6 +1024,8 @@ def _clean_ctf_profiles(
         БЫЛИ бы удалены).
     """
     variants = _klid_variants(layout_klid)
+    # FIX-29: мутация требует права; при delete=False только чтение.
+    _require_mutation(delete, "_clean_ctf_profiles")
     # Младшее слово KLID — для вычисления HKL-форм (layout_ids, FIX-8)
     base_low = layout_ids.klid_low_word(layout_klid)
     doomed: list[str] = []

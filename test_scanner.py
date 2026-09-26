@@ -22,6 +22,7 @@ from unittest import mock
 
 import pytest
 
+import capabilities
 import cleaner
 import config
 import langlist
@@ -886,6 +887,17 @@ class TestRestoreLanguageList:
     Единственная защита от PS-инъекции в этом пути — экранирование
     одинарных кавычек (' -> '') при сборке New-WinUserLanguageList.
     """
+    @pytest.fixture(autouse=True)
+    def _allow_destructive(self):
+        """FIX-29: тест TestRestoreLanguageList работает С РЕАЛЬНЫМИ разрушительными путями.
+
+        Право выдаётся явно, чтобы читатель теста видел: здесь тест
+        действительно пишет в реестр/вызывает PowerShell. Раньше это было
+        неявно — достаточно было забыть подмену, и тест писал в живую
+        систему (FIX-28).
+        """
+        capabilities.grant(capabilities.Capability.LANGUAGE_LIST)
+
 
     @staticmethod
     def _write_json(data):
@@ -1087,6 +1099,17 @@ class TestVersion:
 
 class TestLanguageSync:
     """cleaner.disable/enable_language_sync — парные операции на FakeWinreg."""
+    @pytest.fixture(autouse=True)
+    def _allow_destructive(self):
+        """FIX-29: тест TestLanguageSync работает С РЕАЛЬНЫМИ разрушительными путями.
+
+        Право выдаётся явно, чтобы читатель теста видел: здесь тест
+        действительно пишет в реестр/вызывает PowerShell. Раньше это было
+        неявно — достаточно было забыть подмену, и тест писал в живую
+        систему (FIX-28).
+        """
+        capabilities.grant(capabilities.Capability.CLOUD_SYNC_POLICY)
+
 
     KEY = (
         r"Software\Microsoft\Windows\CurrentVersion"
@@ -1163,6 +1186,19 @@ class TestLanguageSync:
 
 class TestReviewHardening:
     """Закрытие замечаний ревью: валидация KLID в парсерах, форма аргументов PS."""
+    @pytest.fixture(autouse=True)
+    def _allow_destructive(self):
+        """FIX-29: тест TestReviewHardening работает С РЕАЛЬНЫМИ разрушительными путями.
+
+        Право выдаётся явно и ПОЛНО: delete_layout дёргает реестр, PowerShell
+        со списком языков и политику синхронизации. Перечисление всех прав
+        здесь — это же и список того, что этот тест способен сломать.
+        """
+        capabilities.grant(
+            capabilities.Capability.LANGUAGE_LIST,
+        )
+
+
 
     def test_preload_keys_filter_garbage(self, fake_winreg):
         """Мусор в Preload («1», «ru-RU») не покидает парсер (ревью п.3)."""

@@ -22,6 +22,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+import capabilities
 import layout_ids
 from applog import resource_path as resource_path
 from config import TIMEOUTS, is_sandbox_enabled
@@ -98,6 +99,13 @@ def _run_cleanup_script(
         (успех, человеко-читаемый статус/причина ошибки, план изменений).
     """
     empty: dict[str, list[str]] = {"tips_removed": [], "languages_removed": []}
+    # FIX-29: с apply=True скрипт доходит до Set-WinUserLanguageList -Force.
+    # Песочница его прикрывает флагом -Sandbox, но не отменяет самого
+    # вызова, поэтому право проверяется ещё и здесь.
+    if apply:
+        capabilities.require(
+            capabilities.Capability.LANGUAGE_LIST, "_run_cleanup_script(apply=True)"
+        )
     script_path = _PS_DIR / "layout_cleaner_cleanup.ps1"
     cjk_map_path = _write_cjk_map_file()
     cmd = [
@@ -192,6 +200,12 @@ def _sync_language_list_via_powershell(
     tuple[bool, str]
         (успех, статус/причина: SUCCESS | NOCHANGE | текст ошибки).
     """
+    # FIX-29: обе ветки ведут к Set-WinUserLanguageList -Force. Право нужно
+    # безусловно: параметр layout_klid тут только выбирает скрипт, а не
+    # отменяет изменение.
+    capabilities.require(
+        capabilities.Capability.LANGUAGE_LIST, "_sync_language_list_via_powershell"
+    )
     if layout_klid:
         ok, detail, _plan = _run_cleanup_script(layout_klid, apply=True)
         return ok, detail
@@ -375,6 +389,8 @@ def restore_language_list(json_path: str | Path) -> bool:
     Используется для отката изменений, сделанных Set-WinUserLanguageList:
     реестровый .reg не содержит InputMethodTips.
     """
+    # FIX-29: откат списка языков — та же опасная операция, только наоборот.
+    capabilities.require(capabilities.Capability.LANGUAGE_LIST, "restore_language_list")
     path = Path(json_path)
     try:
         data = json.loads(path.read_text(encoding="utf-8"))

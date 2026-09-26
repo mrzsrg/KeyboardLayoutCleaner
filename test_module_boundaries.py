@@ -13,6 +13,7 @@
 """
 
 import ast
+import re
 from pathlib import Path
 
 import backup
@@ -266,3 +267,78 @@ def test_language_list_patches_target_langlist() -> None:
                 ):
                     offenders.append(f"{test_name}:{node.lineno}: {stripped}")
         assert not offenders, offenders
+
+
+class TestPackagingCoversEveryModule:
+    """FIX-29: ни один модуль приложения не должен потеряться при сборке.
+
+    PyInstaller анализирует граф импортов статически. Модуль, который
+    никто не импортирует по имени (только упоминает в комментарии или
+    достаётся по строке), в сборку не попадёт — и упадёт не в CI, а у
+    пользователя на exe.
+
+    Именно так едва не случилось с ``capabilities``: он импортируется из
+    пяти модулей, но перечисление hiddenimports в спеке ведётся руками и
+    про него забыли. Тест делает это невозможным.
+    """
+
+    # Модули, которых НЕТ в поставке намеренно. Это инструменты разработки
+    # и сборки, а не часть приложения; тянуть их в exe незачем.
+    # Список явный, а не «всё подряд»: иначе проверка тихо перестанет
+    # что-либо проверять, стоит добавить служебный скрипт.
+    DEV_ONLY_MODULES = frozenset(
+        {
+            "sign_exe",  # подпись exe (Windows SDK), вызывается вручную
+        }
+    )
+
+    @staticmethod
+    def _app_modules() -> set[str]:
+        return {
+            p.stem
+            for p in ROOT.glob("*.py")
+            if not p.stem.startswith(("test_", "conftest", "__", "setup"))
+        } - TestPackagingCoversEveryModule.DEV_ONLY_MODULES
+
+    @staticmethod
+    def _imports_of(module: str) -> set[str]:
+        """Модули верхнего уровня, импортируемые данным (статически)."""
+        source = (ROOT / f"{module}.py").read_text(encoding="utf-8")
+        found: set[str] = set()
+        for node in ast.walk(ast.parse(source)):
+            if isinstance(node, ast.Import):
+                found.update(a.name.split(".")[0] for a in node.names)
+            elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+                found.add(node.module.split(".")[0])
+        return found
+
+    @staticmethod
+    def _hidden_imports() -> set[str]:
+        spec = (ROOT / "keyboard_cleaner.spec").read_text(encoding="utf-8")
+        start = spec.index("hiddenimports=[")
+        end = spec.index("]", start)
+        block = spec[start:end]
+        return set(re.findall(r'"([a-z_][a-z0-9_]*)"', block))
+
+    def test_every_module_reachable_from_main_or_listed_explicitly(self):
+        app = self._app_modules()
+        listed = self._hidden_imports()
+        # Транзитивное замыкание от точки входа: PyInstaller дотянется до
+        # этих модулей сам, перечислять их вручную не нужно.
+        reachable: set[str] = set()
+        frontier = ["main"]
+        while frontier:
+            current = frontier.pop()
+            if current in reachable or current not in app:
+                continue
+            reachable.add(current)
+            frontier.extend(self._imports_of(current) & app)
+        missing = app - reachable - listed
+        assert not missing, (
+            f"Модули не попадут в сборку: {sorted(missing)}. "
+            "Добавьте их в hiddenimports спекы или импортируйте по имени."
+        )
+
+    def test_capabilities_is_listed_explicitly(self):
+        """capabilities перечисляется руками: на него нельзя полагаться."""
+        assert "capabilities" in self._hidden_imports()

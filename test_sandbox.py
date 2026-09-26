@@ -33,8 +33,10 @@ from unittest import mock
 
 import pytest
 
+import capabilities
 import cleaner
 import langlist
+import mutate
 import scanner
 
 TEST_ROOT = "Software\\KeyboardCleanerTest"
@@ -171,6 +173,17 @@ class TestScannerDryRun(SandboxTestCase):
 @pytest.mark.live
 class TestBackupAndRestore(SandboxTestCase):
     """Чек-лист п.2: структура .reg бэкапа и восстановление (sandbox-ключ)."""
+    @pytest.fixture(autouse=True)
+    def _allow_destructive(self):
+        """FIX-29: тест TestBackupAndRestore работает С РЕАЛЬНЫМИ разрушительными путями.
+
+        Право выдаётся явно, чтобы читатель теста видел: здесь тест
+        действительно пишет в реестр/вызывает PowerShell. Раньше это было
+        неявно — достаточно было забыть подмену, и тест писал в живую
+        систему (FIX-28).
+        """
+        capabilities.grant(capabilities.Capability.REG_IMPORT, capabilities.Capability.LANGUAGE_LIST)
+
 
     def test_backup_structure_and_restore_roundtrip(self) -> None:
         _create_test_tree()
@@ -274,6 +287,17 @@ class TestIntlProfileCleanup(SandboxTestCase):
     Ключ в Languages = язык АКТИВЕН: профиль нельзя удалять целиком,
     чистится только привязка раскладки (InputMethodOverride и пр.).
     """
+    @pytest.fixture(autouse=True)
+    def _allow_destructive(self):
+        """FIX-29: тест TestIntlProfileCleanup работает С РЕАЛЬНЫМИ разрушительными путями.
+
+        Право выдаётся явно, чтобы читатель теста видел: здесь тест
+        действительно пишет в реестр/вызывает PowerShell. Раньше это было
+        неявно — достаточно было забыть подмену, и тест писал в живую
+        систему (FIX-28).
+        """
+        capabilities.grant(capabilities.Capability.REGISTRY_MUTATE)
+
 
     def _build_mini_profile(self, active: bool = True) -> str:
         profile = "IntlProfile"
@@ -416,6 +440,17 @@ class TestScannerDeepScan(SandboxTestCase):
 @pytest.mark.live
 class TestPermissionsSafety(SandboxTestCase):
     """Чек-лист п.3: поведение без админ-прав (без крашей)."""
+    @pytest.fixture(autouse=True)
+    def _allow_destructive(self):
+        """FIX-29: тест TestPermissionsSafety работает С РЕАЛЬНЫМИ разрушительными путями.
+
+        Право выдаётся явно, чтобы читатель теста видел: здесь тест
+        действительно пишет в реестр/вызывает PowerShell. Раньше это было
+        неявно — достаточно было забыть подмену, и тест писал в живую
+        систему (FIX-28).
+        """
+        capabilities.grant(capabilities.Capability.REGISTRY_MUTATE)
+
 
     def test_is_admin_returns_bool(self) -> None:
         assert isinstance(cleaner.is_admin(), bool)
@@ -440,6 +475,22 @@ class TestPermissionsSafety(SandboxTestCase):
 @pytest.mark.live
 class TestPhantomDeletionSimulation(SandboxTestCase):
     """Чек-лист п.4: симуляция удаления фантома (в sandbox-ключе)."""
+    @pytest.fixture(autouse=True)
+    def _allow_destructive(self):
+        """FIX-29: тест TestPhantomDeletionSimulation работает С РЕАЛЬНЫМИ разрушительными путями.
+
+        Право выдаётся явно и ПОЛНО: delete_layout дёргает реестр, PowerShell
+        со списком языков и политику синхронизации. Перечисление всех прав
+        здесь — это же и список того, что этот тест способен сломать.
+        """
+        capabilities.grant(
+            capabilities.Capability.REGISTRY_MUTATE,
+            capabilities.Capability.LANGUAGE_LIST,
+            capabilities.Capability.CLOUD_SYNC_POLICY,
+            capabilities.Capability.REG_IMPORT,
+        )
+
+
 
     def test_phantom_removed_from_test_key(self) -> None:
         _create_test_tree()
@@ -542,6 +593,17 @@ class TestDryRunAndBackupLive(SandboxTestCase):
 @pytest.mark.live
 class TestCtfProfileCleanup(SandboxTestCase):
     """TSF-профили CTF: удаление ЦЕЛИКОМ, decimal→hex, глубина 5, dry-run."""
+    @pytest.fixture(autouse=True)
+    def _allow_destructive(self):
+        """FIX-29: тест TestCtfProfileCleanup работает С РЕАЛЬНЫМИ разрушительными путями.
+
+        Право выдаётся явно, чтобы читатель теста видел: здесь тест
+        действительно пишет в реестр/вызывает PowerShell. Раньше это было
+        неявно — достаточно было забыть подмену, и тест писал в живую
+        систему (FIX-28).
+        """
+        capabilities.grant(capabilities.Capability.REGISTRY_MUTATE)
+
 
     PHANTOM_GUID = "{34745C63-B2F0-4784-8B67-5E12C8701A31}"
     LEGIT_GUID = "{11111111-2222-3333-4444-555555555555}"
@@ -773,6 +835,17 @@ class TestLanguageListSandboxIsolation:
     переустановили бы РЕАЛЬНЫЙ список языков пользователя — это и есть
     причина, по которой флаги -Sandbox добавлены во все три PS-скрипта.
     """
+    @pytest.fixture(autouse=True)
+    def _allow_destructive(self):
+        """FIX-29: тест TestLanguageListSandboxIsolation работает С РЕАЛЬНЫМИ разрушительными путями.
+
+        Право выдаётся явно, чтобы читатель теста видел: здесь тест
+        действительно пишет в реестр/вызывает PowerShell. Раньше это было
+        неявно — достаточно было забыть подмену, и тест писал в живую
+        систему (FIX-28).
+        """
+        capabilities.grant(capabilities.Capability.LANGUAGE_LIST)
+
 
     @staticmethod
     def _cmd(monkeypatch, sandbox: bool):
@@ -970,20 +1043,19 @@ class TestCtfmonSandboxIsolation:
             _delete_test_tree()
         assert calls == [], f"delete_layout в песочнице убил живые процессы: {calls}"
 
-    def test_session_guard_blocks_live_input_services(self, monkeypatch):
-        """Барьер conftest.py обязан быть активен — иначе всё выше — фикция.
+    def test_session_guard_blocks_live_input_services(self):
+        """FIX-29: разрушительный путь без права обязан паять (FIX-28).
 
-        Без него забытая подмена в любом новом тесте снова убьёт службу
-        ввода у того, кто запустил pytest. Проверяем именно отказ: тихий
-        no-op пропустил бы утечку дальше незаметно.
+        Барьер переехал из conftest внутрь самих функций, поэтому проверка
+        идёт через require(), а не через подмену: забыть подмену больше
+        ничего не стоит — require() всё равно сработает.
         """
-        from conftest import LiveInputServiceLeakError
+        from capabilities import CapabilityDeniedError
 
-        # Никаких собственных подмен: только autouse-фикстура conftest.
-        assert callable(cleaner._stop_ctfmon)
-        with pytest.raises(LiveInputServiceLeakError):
+        assert capabilities.is_granted(capabilities.Capability.INPUT_SERVICES) is False
+        with pytest.raises(CapabilityDeniedError):
             cleaner._stop_ctfmon()
-        with pytest.raises(LiveInputServiceLeakError):
+        with pytest.raises(CapabilityDeniedError):
             cleaner._start_ctfmon()
 
     def test_session_guard_redirects_suspension_marker(self, tmp_path):
@@ -991,6 +1063,76 @@ class TestCtfmonSandboxIsolation:
         marker = cleaner._input_suspended_marker_path()
         assert str(marker).startswith(str(tmp_path.parent)) or "Temp" in str(marker)
         assert "KeyboardLayoutCleaner" not in str(marker)
+
+
+class TestCapabilityModel:
+    """FIX-29: модель прав — deny by default, выдача только явная."""
+
+    def test_nothing_is_granted_by_default(self):
+        assert capabilities.granted_set() == set()
+
+    def test_require_names_the_missing_capability(self):
+        from capabilities import CapabilityDeniedError
+
+        with pytest.raises(CapabilityDeniedError) as exc:
+            capabilities.require(capabilities.Capability.REG_IMPORT, "тест")
+        assert "reg_import" in str(exc.value)
+        # Сообщение обязано называть способ починить, иначе тест падает
+        # загадочно и devs начинают гадать, а не читать.
+        assert "granted" in str(exc.value)
+
+    def test_granted_context_manager(self):
+        from capabilities import CapabilityDeniedError
+
+        with pytest.raises(CapabilityDeniedError):
+            capabilities.require(capabilities.Capability.REGISTRY_MUTATE)
+        with capabilities.granted(capabilities.Capability.REGISTRY_MUTATE):
+            capabilities.require(capabilities.Capability.REGISTRY_MUTATE)
+        # Контекст отпускает право обратно.
+        with pytest.raises(CapabilityDeniedError):
+            capabilities.require(capabilities.Capability.REGISTRY_MUTATE)
+
+    def test_nested_granted_keeps_outer_permission(self):
+        """Вложенный granted() не должен погасить право, выданное снаружи."""
+        with capabilities.granted(capabilities.Capability.LANGUAGE_LIST):
+            with capabilities.granted(capabilities.Capability.REGISTRY_MUTATE):
+                pass
+            capabilities.require(capabilities.Capability.LANGUAGE_LIST)
+
+    def test_capabilities_are_separate(self):
+        """Право на одно не даёт права на другое.
+
+        Права разведены не для эстетики: тесту, которому нужно подменить
+        PowerShell, не нужно разрешение останавливать ctfmon.
+        """
+        from capabilities import CapabilityDeniedError
+
+        with (
+            capabilities.granted(capabilities.Capability.LANGUAGE_LIST),
+            pytest.raises(CapabilityDeniedError),
+        ):
+            capabilities.require(capabilities.Capability.INPUT_SERVICES)
+
+    def test_welcome_sync_not_in_app_capabilities(self):
+        """Необратимая операция не входит в обычный набор прав.
+
+        Иначе обычный запуск приложения мог бы переписать HKU\\.DEFAULT
+        без явного --sync-welcome.
+        """
+        assert capabilities.Capability.WELCOME_SYNC not in capabilities.APP_CAPABILITIES
+        assert capabilities.Capability.WELCOME_SYNC in capabilities.Capability
+
+    def test_dry_run_needs_no_capability(self):
+        """delete=False — это чтение; право на мутацию не требуется.
+
+        Иначе планирование удаления перестало бы работать там, где
+        запись запрещена, а планы строятся именно для показа.
+        """
+        mutate._require_mutation(False, "dry-run")
+        from capabilities import CapabilityDeniedError
+
+        with pytest.raises(CapabilityDeniedError):
+            mutate._require_mutation(True, "apply")
 
 
 if __name__ == "__main__":

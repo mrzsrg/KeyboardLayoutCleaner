@@ -102,6 +102,11 @@ a = Analysis(
         "mutate",
         "langlist",
         "settings",
+        # FIX-29: модель прав на разрушительные операции. Импортируется
+        # из mutate/cleaner/backup/langlist/settings, но перечисляется явно:
+        # если PyInstaller решит, что модуль «только объявляет константы»,
+        # собранный exe упадёт на require() уже у пользователя.
+        "capabilities",
     ],
     hookspath=[],
     hooksconfig={},

@@ -23,6 +23,7 @@ import logging
 import subprocess
 import winreg
 
+import capabilities
 import mutate
 from applog import resource_path as resource_path
 from config import _SANDBOX_ROOT, TIMEOUTS
@@ -119,6 +120,10 @@ def disable_language_sync() -> tuple[bool, str]:
     tuple[bool, str]
         (успех, детализированное описание результата/ошибки)
     """
+    # FIX-29: запись в живой HKCU пользователя.
+    capabilities.require(
+        capabilities.Capability.CLOUD_SYNC_POLICY, "disable_language_sync"
+    )
     key_path = _settingsync_groups_key_path()
     # Проверяем текущее состояние перед записью
     if _is_language_sync_blocked():
@@ -157,6 +162,10 @@ def enable_language_sync() -> tuple[bool, str]:
     tuple[bool, str]
         (успех, детализированное описание результата/ошибки)
     """
+    # FIX-29: см. disable_language_sync.
+    capabilities.require(
+        capabilities.Capability.CLOUD_SYNC_POLICY, "enable_language_sync"
+    )
     key_path = _settingsync_groups_key_path()
     # Проверяем текущее состояние перед записью
     if not _is_language_sync_blocked():
@@ -205,6 +214,11 @@ def sync_welcome_screen_settings() -> bool:
     bool
         True если команда выполнена успешно, False при ошибке.
     """
+    # FIX-29: необратимая операция, отдельное право. Класс защиты здесь
+    # наибольший из всех — откат невозможен в принципе, а не «сложен».
+    capabilities.require(
+        capabilities.Capability.WELCOME_SYNC, "sync_welcome_screen_settings"
+    )
     script_path = _PS_DIR / "layout_cleaner_sync_welcome.ps1"
     try:
         res = run_hidden(

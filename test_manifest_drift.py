@@ -14,6 +14,7 @@ from unittest import mock
 import pytest
 
 import backup
+import capabilities
 import cleaner
 import langlist
 from conftest import FakeWinreg, _ensure_main, fake_root_consts, registry_modules
@@ -417,6 +418,17 @@ class TestSubstitutesAntiRegression:
     НЕ удаляется при удалении `00000409`/`00000419`, а десятичная форма HKL
     обрабатывается по-прежнему.
     """
+    @pytest.fixture(autouse=True)
+    def _allow_destructive(self):
+        """FIX-29: тест TestSubstitutesAntiRegression работает С РЕАЛЬНЫМИ разрушительными путями.
+
+        Право выдаётся явно, чтобы читатель теста видел: здесь тест
+        действительно пишет в реестр/вызывает PowerShell. Раньше это было
+        неявно — достаточно было забыть подмену, и тест писал в живую
+        систему (FIX-28).
+        """
+        capabilities.grant(capabilities.Capability.REGISTRY_MUTATE)
+
 
     SUBST = "Keyboard Layout\\Substitutes"
     PRELOAD = "Keyboard Layout\\Preload"
@@ -475,6 +487,22 @@ class TestSubstitutesAntiRegression:
 
 class TestDeleteLayoutManifestIntegration:
     """E2E delete_layout (FakeWinreg): манифест до мутации, дрейфа нет."""
+    @pytest.fixture(autouse=True)
+    def _allow_destructive(self):
+        """FIX-29: тест TestDeleteLayoutManifestIntegration работает С РЕАЛЬНЫМИ разрушительными путями.
+
+        Право выдаётся явно и ПОЛНО: delete_layout дёргает реестр, PowerShell
+        со списком языков и политику синхронизации. Перечисление всех прав
+        здесь — это же и список того, что этот тест способен сломать.
+        """
+        capabilities.grant(
+            capabilities.Capability.REGISTRY_MUTATE,
+            capabilities.Capability.LANGUAGE_LIST,
+            capabilities.Capability.CLOUD_SYNC_POLICY,
+            capabilities.Capability.REG_IMPORT,
+        )
+
+
 
     KLID = "00000419"
     PRELOAD = "Keyboard Layout\\Preload"
@@ -629,6 +657,17 @@ class TestRestoreWorksWithoutManifest:
     мог перенести только `.reg`, архив мог достаться без него) не должно
     ломать восстановление.
     """
+    @pytest.fixture(autouse=True)
+    def _allow_destructive(self):
+        """FIX-29: тест TestRestoreWorksWithoutManifest работает С РЕАЛЬНЫМИ разрушительными путями.
+
+        Право выдаётся явно, чтобы читатель теста видел: здесь тест
+        действительно пишет в реестр/вызывает PowerShell. Раньше это было
+        неявно — достаточно было забыть подмену, и тест писал в живую
+        систему (FIX-28).
+        """
+        capabilities.grant(capabilities.Capability.REG_IMPORT)
+
 
     @pytest.fixture(autouse=True)
     def _no_live_ctfmon(self, monkeypatch):
@@ -706,6 +745,17 @@ class TestRestoreVerifiesSwitcher:
     Раньше диалог говорил «Восстановление завершено» и добавлял безусловный
     совет «выйдите и войдите» — независимо от того, было расхождение или нет.
     """
+    @pytest.fixture(autouse=True)
+    def _allow_destructive(self):
+        """FIX-29: тест TestRestoreVerifiesSwitcher работает С РЕАЛЬНЫМИ разрушительными путями.
+
+        Право выдаётся явно, чтобы читатель теста видел: здесь тест
+        действительно пишет в реестр/вызывает PowerShell. Раньше это было
+        неявно — достаточно было забыть подмену, и тест писал в живую
+        систему (FIX-28).
+        """
+        capabilities.grant(capabilities.Capability.REG_IMPORT)
+
 
     @staticmethod
     @contextlib.contextmanager

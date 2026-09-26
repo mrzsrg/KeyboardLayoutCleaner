@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any
 
 import applog
+import capabilities
 import layout_ids
 from applog import get_app_dir
 from applog import resource_path as resource_path
@@ -453,6 +454,9 @@ def _stop_ctfmon() -> bool:
     пользовательских данных) — инъекции невозможны; права администратора
     не нужны.
     """
+    # FIX-29: Stop-Process -Force по ЖИВОМУ процессу пользователя. Это не
+    # операция с реестром, поэтому песочница её не покрывала никогда.
+    capabilities.require(capabilities.Capability.INPUT_SERVICES, "_stop_ctfmon")
     script_path = _PS_DIR / "layout_cleaner_stop_ctfmon.ps1"
     try:
         result = run_hidden(
@@ -483,6 +487,8 @@ def _start_ctfmon() -> bool:
     служба перечитала уже чистый реестр. Best-effort: при неудаче UI
     советует перезагрузить ПК.
     """
+    # FIX-29: см. _stop_ctfmon — запуск тоже трогает живой процесс.
+    capabilities.require(capabilities.Capability.INPUT_SERVICES, "_start_ctfmon")
     script_path = _PS_DIR / "layout_cleaner_start_ctfmon.ps1"
     try:
         result = run_hidden(
@@ -1487,6 +1493,9 @@ if __name__ == "__main__":
     parser.add_argument("--json", action="store_true", help="вывести отчёт в JSON")
     args = parser.parse_args()
 
+    # FIX-29: CLI — вторая точка входа, права выдаются здесь же.
+    capabilities.grant(*capabilities.APP_CAPABILITIES)
+
     if args.sandbox:
         enable_sandbox()
 
@@ -1498,6 +1507,10 @@ if __name__ == "__main__":
             "ВНИМАНИЕ: копирование настроек в Экран приветствия необратимо "
             "(бэкап этих веток не создаётся)."
         )
+        # FIX-29: право на необратимую операцию выдаётся только здесь — по
+        # явному флагу. В APP_CAPABILITIES его нет намеренно, чтобы обычный
+        # запуск приложения не мог переписать HKU\.DEFAULT.
+        capabilities.grant(capabilities.Capability.WELCOME_SYNC)
         ok = sync_welcome_screen_settings()
         print(f"sync_welcome: {'OK' if ok else 'FAILED'}")  # noqa: T201
         raise SystemExit(0 if ok else 1)

@@ -15,6 +15,8 @@ from unittest import mock
 
 import pytest
 
+import capabilities
+
 # FIX-10 (шаг 3): список языков и PS-адаптер живут в langlist.py; cleaner
 # только реэкспортирует. Подменять надо langlist.run_hidden — подмена
 # cleaner.run_hidden на восстановление языков больше не влияет.
@@ -90,6 +92,16 @@ function global:Set-WinUserLanguageList {
         timeout=60,
     )
     return result.returncode, result.stdout.splitlines()
+
+
+@pytest.fixture(autouse=True)
+def _allow_destructive_module():
+    """FIX-29: тесты этого модуля вызывают restore_language_list.
+
+    PowerShell внутри подменён, но право требуется на входе в функцию —
+    именно это и должно быть видно в тексте теста.
+    """
+    capabilities.grant(capabilities.Capability.LANGUAGE_LIST)
 
 
 requires_ps = pytest.mark.skipif(

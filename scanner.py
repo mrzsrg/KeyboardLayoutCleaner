@@ -552,6 +552,36 @@ def _get_language_list_from_powershell() -> list[dict[str, Any]]:
         return []
 
 
+def _get_switcher_klids() -> set[str] | None:
+    """FIX-31: KLID, которые переключатель показывает СЕЙЧАС.
+
+    ``None`` — состояние прочитать не удалось (API недоступна, не
+    Windows, тест). Это НЕ «раскладок нет»: вызывающий обязан отличать
+    одно от другого, иначе непрочитанное состояние превратится в
+    диагноз «всё сломалось».
+
+    Замеренная на живой машине асимметрия, ради которой всё затевалось:
+    удаление раскладки убирает её из ``Preload`` и из списка языков
+    НЕМЕДЛЕННО, но панель продолжает показывать её до следующего входа
+    в систему. Реестр хранит намерение, панель — состояние сессии.
+    """
+    try:
+        import winapi
+
+        hkls = winapi.get_keyboard_layout_list()
+    except (AttributeError, OSError, ImportError, ValueError):
+        return None
+    if not hkls:
+        return None
+    klids: set[str] = set()
+    for hkl in hkls:
+        # HKL 0x04190419 -> младшее слово 0x0419 -> полный KLID 00000419.
+        # Старшее слово — тип клавиатуры, к раскладке отношения не имеет.
+        low = hkl & 0xFFFF
+        klids.add(f"{0x0000_0000 | low:08x}")
+    return klids
+
+
 def check_switcher_consistency() -> dict[str, list[str]]:
     """FIX-26: сверка списка языков с тем, что способен показать переключатель.
 
@@ -639,6 +669,17 @@ def check_switcher_consistency() -> dict[str, list[str]]:
             klid for klid in list_klids if klid[-4:] not in ctf_langids
         ),
     }
+
+    # FIX-31: сверка с тем, что панель показывает ФАКТИЧЕСКИ. Registry
+    # описывает намерение, панель — состояние сессии, и расходятся они в
+    # ОБЕ стороны. Прежняя проверка смотрела только на реестр и кеш, оба из
+    # которых операция только что правила, — поэтому на реально сломанном
+    # переключателе рапортовала «всё в порядке».
+    switcher = _get_switcher_klids()
+    if switcher is not None:
+        intended = list_klids | preload_klids
+        result["switcher_missing"] = sorted(intended - switcher)
+        result["switcher_stale"] = sorted(switcher - intended)
     for key_name, values in result.items():
         if values:
             logger.warning("Сверка переключателя: %s = %s", key_name, ", ".join(values))
@@ -646,10 +687,24 @@ def check_switcher_consistency() -> dict[str, list[str]]:
 
 
 def is_switcher_consistent(report: dict[str, list[str]] | None) -> bool:
-    """Есть ли расхождение, способное скрыть раскладку из переключателя."""
+    """Есть ли расхождение, способное скрыть раскладку из переключателя.
+
+    FIX-31: учитываются и «нет в панели», и «в панели, но не в реестре».
+    Второе раньше считалось нормой, а на деле означает устаревший профиль
+    сессии: раскладка удалена из настроек, но продолжает висеть в
+    переключателе до следующего входа в систему.
+    """
     if not report:
         return True
-    return not (report.get("tips_without_preload") or report.get("preload_without_tip"))
+    return not any(
+        report.get(key)
+        for key in (
+            "tips_without_preload",
+            "preload_without_tip",
+            "switcher_missing",
+            "switcher_stale",
+        )
+    )
 
 
 # ---------------------------------------------------------------------------

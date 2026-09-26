@@ -88,8 +88,6 @@
   "dlg_advice_logoff": "Se o layout ainda aparecer em alguns aplicativos, saia da sessão e entre novamente (ou reinicie o Explorer).",
   "dlg_switcher_missing_tip": "\nA lista de idiomas e o seletor estão dessincronizados: {klids} está instalado como idioma, mas não aparece no seletor.",
   "dlg_switcher_stale_preload": "\nEntradas obsoletas no seletor sem idioma: {klids}.",
-  "dlg_switcher_ctf_missing": "\nO cache do método de entrada (CTF) não tem o ramo de: {klids}. Esses layouts estão na lista de idiomas, mas o seletor não pode mostrá-los até que o cache seja reconstruído.",
-  "dlg_switcher_ctf_advice": "\nO serviço de entrada (ctfmon) foi reiniciado para reconstruir esse cache. Se o layout continuar ausente, saia da sessão e entre novamente (ou reinicie). A operação não quebrou nada: o Windows reconstrói o cache CTF no próximo logon.",
   "dlg_switcher_advice": "\nReinicie o Windows (ou saia e entre novamente) para reconstruir o cache do método de entrada. Até là, um layout pode não aparecer no seletor embora ainda esteja listado nas Configurações de idioma.",
   "dlg_advice_ps_failed": "O Registro foi limpo, mas não foi possível atualizar a lista de idiomas. Veja layout_cleaner.log.",
   "dlg_advice_restore": "É possível restaurar o que foi removido pelo botão “↩ Restaurar do backup” (merge: os valores salvos são aplicados sobre o estado atual, as entradas posteriores permanecem).",
@@ -186,5 +184,9 @@
   "status_sync_block_failed": "Falha ao bloquear a sincronização na nuvem",
   "status_sync_blocked": "Sincronização de idiomas na nuvem bloqueada",
   "status_sync_unblocked": "Sincronização na nuvem desbloqueada",
-  "dlg_elevation_association": "O arquivo não está associado a nenhum aplicativo, portanto o Windows não consegue iniciá-lo.\nExecute o executável original, não uma cópia renomeada."
+  "dlg_elevation_association": "O arquivo não está associado a nenhum aplicativo, portanto o Windows não consegue iniciá-lo.\nExecute o executável original, não uma cópia renomeada.",
+  "dlg_switcher_absent": "\nO seletor não contém os layouts que estão nas configurações: {klids}. Estão instalados, mas não funcionam.",
+  "dlg_switcher_session_stale": "\nO seletor ainda mostra layouts que foram removidos das configurações: {klids}. A remoção funcionou, mas o seletor mantém a lista anterior.",
+  "dlg_switcher_signout_advice": "\nTermine a sessão e entre novamente: o seletor de teclado só atualiza no início de sessão. Nem reiniciar o serviço de entrada nem sincronizar a lista novamente atualizam — verificado em uma máquina real. A divergência persiste até você entrar de novo.",
+  "dlg_switcher_ctf_note": "\nPara referência: o cache do serviço de entrada (CTF) não tem ramo para: {klids}. Não é uma falha — layouts simples não precisam dele e funcionam bem no seletor."
 }

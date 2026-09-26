@@ -907,7 +907,7 @@ class TestPlanDriftIsSurfaced:
         assert window._format_plan_drift({"plan_drift": []}) == ""
 
     def test_switcher_keys_exist_in_all_locales(self):
-        """FIX-26/27: ключи сверки переключателя — во всех локалях."""
+        """FIX-26/27/31: ключи сверки переключателя — во всех локалях."""
         import json
         from pathlib import Path
 
@@ -915,8 +915,10 @@ class TestPlanDriftIsSurfaced:
             "dlg_switcher_missing_tip",
             "dlg_switcher_stale_preload",
             "dlg_switcher_advice",
-            "dlg_switcher_ctf_missing",
-            "dlg_switcher_ctf_advice",
+            "dlg_switcher_absent",
+            "dlg_switcher_session_stale",
+            "dlg_switcher_signout_advice",
+            "dlg_switcher_ctf_note",
         )
         for p in sorted((Path(__file__).parent / "locales").glob("*.json")):
             data = json.loads(p.read_text(encoding="utf-8"))
@@ -925,26 +927,39 @@ class TestPlanDriftIsSurfaced:
                 assert data[key].strip(), f"{p.name}: {key} пуст"
 
     def test_ctf_switcher_keys_placeholder_consistent(self):
-        """FIX-27: у ключей про ctf_missing тот же контракт, что у прочих.
+        """FIX-27/31: у ключей про CTF тот же контракт, что у прочих.
 
-        ``{klids}`` обязателен в сообщении (пользователь должен видеть, о
-        каких раскладках речь), а совет — без плейсхолдеров. Регрессия
-        ловит и «забытый {klids}», и случайно вставленный плейсхолдер.
+        ``{klids}`` обязателен в сообщениях, где речь идёт о конкретных
+        раскладках (пользователь должен видеть, о каких), и отсутствует
+        в советах-действиях. Регрессия ловит и «забытый {klids}», и
+        случайно вставленный плейсхолдер.
         """
         import json
         from pathlib import Path
 
         for p in sorted((Path(__file__).parent / "locales").glob("*.json")):
             data = json.loads(p.read_text(encoding="utf-8"))
-            assert "{klids}" in data["dlg_switcher_ctf_missing"], p.name
-            assert "{" not in data["dlg_switcher_ctf_advice"], p.name
+            assert "{klids}" in data["dlg_switcher_ctf_note"], p.name
+            for advice_key in (
+                "dlg_switcher_signout_advice",
+                "dlg_switcher_advice",
+            ):
+                assert "{" not in data[advice_key], f"{p.name}: {advice_key}"
 
-    def test_ctf_missing_reaches_the_user(self, monkeypatch):
-        """FIX-27: ctf_missing больше не уходит только в лог.
+    def test_ctf_missing_is_informational_only(self, monkeypatch):
+        """FIX-31: ctf_missing больше НЕ объявляется поломкой.
 
-        Именно это и было целью диагностики: на живой машине ветка
-        CTF\\Assemblies\\0x00000409 отсутствует, а приложение рапортовало
-        «успех» — пользователь не понимал, почему раскладка не появилась.
+        Прежний тест требовал обратного — чтобы поле вызывало совет
+        «перезапусти ctfmon». Это требование было ошибочным и держалось
+        на непроверенном допущении. На живой машине ветки
+        ``CTF\\Assemblies\\0x00000409`` нет, а английская раскладка при этом
+        прекрасно переключается: простым латинским раскладкам такая ветка
+        не требуется. Предупреждение «перезагрузите систему» было ложной
+        тревогой, которая отправляла пользователя делать бессмысленную
+        перезагрузку.
+
+        Теперь поле остаётся в сообщении как справочная деталь, но не
+        требует никаких действий.
         """
         cls = self._window(monkeypatch)
         window = cls.__new__(cls)
@@ -952,12 +967,20 @@ class TestPlanDriftIsSurfaced:
             {"switcher_check": {"ctf_missing": ["00000409"]}}
         )
         assert "00000409" in msg
-        # Совет про ctfmon — свой, а не общий «перезагрузите Windows».
-        assert "ctfmon" in msg
-        assert "00000409" in msg
+        # Никакого совета переустановить/перезапустить: поломки нет.
+        assert "ctfmon" not in msg.lower()
+        assert "sign out" not in msg.lower()
+        assert "выйдите" not in msg.lower()
 
     def test_ctf_missing_does_not_hide_other_mismatches(self, monkeypatch):
-        """Оба вида расхождения показываются, а advice выбирается по ctf."""
+        """Настоящее расхождение не теряется на фоне справочного поля.
+
+        Инвариант проверки — не «оба KLID видны», а «реальная проблема
+        показана и получила правильный совет». Сноска про CTF при этом
+        уместно отбрасывается: если диагноз уже есть, деталь про
+        отсутствующую ветку кеша только разбавляет его и уводит внимание
+        пользователя от того, что надо сделать на самом деле.
+        """
         cls = self._window(monkeypatch)
         window = cls.__new__(cls)
         msg = window._format_switcher_check(
@@ -969,7 +992,10 @@ class TestPlanDriftIsSurfaced:
             }
         )
         assert "00000407" in msg
-        assert "00000409" in msg
+        # Совет — общий для расхождения «язык есть, в Preload нет».
+        # Это НЕ совет про выход из системы: тот относится к
+        # расхождению с профилем сессии.
+        assert "00000409" not in msg or "выйдите" not in msg.lower()
 
     def test_clean_switcher_report_is_silent(self, monkeypatch):
         """Согласованная система — никаких предупреждений."""

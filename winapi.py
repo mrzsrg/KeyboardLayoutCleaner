@@ -72,6 +72,15 @@ user32.MessageBoxW.argtypes = [
 ]
 user32.MessageBoxW.restype = ctypes.c_int  # IDOK/IDCANCEL/…
 
+# FIX-31: реальный состав панели переключения раскладок. Возвращает HKL
+# активных локалей (например 0x04190419). Указатель передаётся массивом,
+# поэтому без SizeParamIndex ctypes выделял бы буфер неправильно.
+user32.GetKeyboardLayoutList.argtypes = [
+    ctypes.c_int,  # nBuff
+    ctypes.POINTER(wintypes.HKL),
+]
+user32.GetKeyboardLayoutList.restype = ctypes.c_int
+
 # --- shell32 ---
 shell32.ShellExecuteW.argtypes = [
     wintypes.HWND,  # hwnd
@@ -158,3 +167,30 @@ def is_user_an_admin() -> bool:
 def get_user_default_ui_language() -> int:
     """``GetUserDefaultUILanguage`` (LCID интерфейса Windows)."""
     return int(kernel32.GetUserDefaultUILanguage())
+
+
+def get_keyboard_layout_list(limit: int = 64) -> list[int]:
+    """``GetKeyboardLayoutList``; вернуть список HKL активных локалей.
+
+    FIX-31: единственный источник истины о том, что ПЕРЕКЛЮЧАТЕЛЬ
+    реально может предложить. Реестр для этого не годится: он хранит
+    НАМЕРЕНИЕ, а панель показывает СОСТОЯНИЕ сессии, и они расходятся в
+    обе стороны.
+
+    Пустой список означает «не удалось получить» (например, API
+    недоступна). Отличать это от «раскладок нет» обязан вызывающий:
+    иначе непрочитанное состояние превратится в вывод «всё сломалось».
+    """
+    buffer = (wintypes.HKL * limit)()
+    count = user32.GetKeyboardLayoutList(limit, buffer)
+    if count <= 0:
+        return []
+    # wintypes.HKL — это c_void_p, поэтому элемент массива приходит как
+    # int | None (None == NULL). Пропускаем NULL: он не является раскладкой,
+    # а превращение None в ноль дало бы выдуманный KLID 00000000.
+    hkls: list[int] = []
+    for index in range(count):
+        value = buffer[index]
+        if value:
+            hkls.append(int(value))
+    return hkls

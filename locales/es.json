@@ -89,8 +89,6 @@
   "dlg_switcher_missing_tip": "\nLa lista de idiomas y el selector están desincronizados: {klids} está instalado como idioma, pero no aparece en el selector.",
   "dlg_switcher_stale_preload": "\nEntradas obsoletas en el selector sin idioma: {klids}.",
   "dlg_switcher_advice": "\nReinicie Windows (o cierre y vuelva a iniciar sesión) para reconstruir la caché del método de entrada. Hasta entonces, una distribución puede no aparecer en el selector aunque siga figurando como instalada en Configuración de idioma.",
-  "dlg_switcher_ctf_missing": "\nEn la caché del método de entrada (CTF) falta la rama de: {klids}. Estas distribuciones están en la lista de idiomas, pero el selector no puede mostrarlas hasta que se reconstruya la caché.",
-  "dlg_switcher_ctf_advice": "\nEl servicio de entrada (ctfmon) se reinició para reconstruir esa caché. Si la distribución sigue sin aparecer, cierra la sesión y vuelve a iniciarla (o reinicia el equipo). La operación no ha roto nada: Windows reconstruye la caché CTF en el siguiente inicio de sesión.",
   "dlg_advice_ps_failed": "El registro se limpió, pero no se pudo actualizar la lista de idiomas. Consulta layout_cleaner.log para más detalles.",
   "dlg_advice_restore": "Puedes restaurar lo que se eliminó con el botón “↩ Restaurar desde la copia” (merge: los valores guardados se aplican sobre el registro actual y las entradas creadas más tarde se conservan).",
   "dlg_advice_ctfmon": "El servicio de entrada (ctfmon) devolvió {count} entradas: se han vuelto a eliminar.",
@@ -186,5 +184,9 @@
   "brightness_ultra": "◐ Muy claro (165 %)",
   "status_busy_wait": "⏳ Espera a que termine la operación en curso",
   "list_row_terminal": "[KBD] {name}  |  entradas: {count}",
-  "dlg_elevation_association": "El archivo no está asociado a ninguna aplicación, por lo que Windows no puede iniciarlo.\nEjecuta el ejecutable original, no una copia renombrada."
+  "dlg_elevation_association": "El archivo no está asociado a ninguna aplicación, por lo que Windows no puede iniciarlo.\nEjecuta el ejecutable original, no una copia renombrada.",
+  "dlg_switcher_absent": "\nEl selector no contiene las distribuciones que sí están en la configuración: {klids}. Están instaladas pero no funcionan.",
+  "dlg_switcher_session_stale": "\nEl selector aún muestra distribuciones que se quitaron de la configuración: {klids}. La eliminación funcionó, pero el selector conserva la lista anterior.",
+  "dlg_switcher_signout_advice": "\nCierre sesión y vuelva a entrar: el selector de teclado solo se actualiza al iniciar sesión. Ni reiniciar el servicio de entrada ni volver a sincronizar la lista lo actualizan — verificado en una máquina real. La discrepancia persiste hasta que vuelva a entrar.",
+  "dlg_switcher_ctf_note": "\nPara referencia: la caché del servicio de entrada (CTF) no tiene rama para: {klids}. No es un fallo — las distribuciones simples no la necesitan y funcionan bien en el selector."
 }

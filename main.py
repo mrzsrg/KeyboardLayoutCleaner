@@ -1742,37 +1742,67 @@ class KeyboardLayoutCleaner(ctk.CTk):
 
     @staticmethod
     def _format_switcher_check(report: dict[str, Any]) -> str:
-        """FIX-26/27: предупреждение о расхождении со списком языков.
+        """FIX-26/27/31: предупреждение о расхождении со списком языков.
 
         Пустая строка, если расхождения нет. Иначе — что именно не сошлось
-        и что делать. Раньше эта ситуация была безымянной: операция рапортовала
-        «успех», а раскладка пропадала из переключателя до перезагрузки.
+        и что делать.
 
-        FIX-27: ``ctf_missing`` больше НЕ проглатывается. Раньше он уходил
-        только в лог, и это была ровно та ситуация, ради которой диагностика
-        и заводилась: на живой системе ветка ``CTF\\Assemblies\\0x00000409``
-        отсутствовала, а пользователю говорилось «успех» — он не понимал,
-        почему английская раскладка не появилась. Теперь это видно и
-        сформулировано как действие, а не как «возможно, сбой».
+        FIX-31, главное. Проверка сверяет не реестр с кешем, а НАМЕРЕНИЕ
+        (Preload + список языков) с тем, что панель показывает ФАКТИЧЕСКИ
+        (``GetKeyboardLayoutList``). Это разные вещи, и расходятся они в
+        обе стороны:
+
+          * ``switcher_missing`` — раскладка объявлена, но панель её не
+            показывает: она не работает;
+          * ``switcher_stale`` — раскладки в панели нет уже в настройках:
+            профиль сессии устарел, нужен выход и вход.
+
+        Прежняя проверка смотрела только на реестр и кеш CTF — оба из
+        которых операция только что правила. На живой машине это давало
+        «всё в порядке» при переключателе, который продолжал показывать
+        удалённую раскладку.
+
+        FIX-31, про ``ctf_missing``. Поле перестало быть диагнозом: на
+        живой машине ветки ``CTF\\\\Assemblies\\\\0x00000409`` не существует,
+        а английская раскладка при этом прекрасно переключается. Простым
+        латинским раскладкам такая ветка не нужна. Показываем как
+        справочную деталь, БЕЗ совета переустановить систему.
         """
         check = report.get("switcher_check") or {}
         tips_missing = check.get("tips_without_preload") or []
         preload_stale = check.get("preload_without_tip") or []
+        switcher_missing = check.get("switcher_missing") or []
+        switcher_stale = check.get("switcher_stale") or []
         ctf_missing = check.get("ctf_missing") or []
-        if not tips_missing and not preload_stale and not ctf_missing:
-            return ""
+
         parts = []
         if tips_missing:
             parts.append(_t("dlg_switcher_missing_tip", klids=", ".join(tips_missing)))
         if preload_stale:
             parts.append(_t("dlg_switcher_stale_preload", klids=", ".join(preload_stale)))
-        if ctf_missing:
-            parts.append(_t("dlg_switcher_ctf_missing", klids=", ".join(ctf_missing)))
-            # Свой совет, а не общий: отсутствие ветки CTF лечится НЕ
-            # перезагрузкой (её делает пользователь вручную), а перезапуском
-            # службы ввода, который выполняет ctfmon при выходе из операции.
-            parts.append(_t("dlg_switcher_ctf_advice"))
-            return "\n" + "\n".join(parts)
+        if switcher_missing:
+            parts.append(
+                _t("dlg_switcher_absent", klids=", ".join(switcher_missing))
+            )
+        if switcher_stale:
+            # Самое частое и раньше всего невидимое: удаление сработало в
+            # реестре, но панель продолжает показывать старую раскладку.
+            parts.append(_t("dlg_switcher_session_stale", klids=", ".join(switcher_stale)))
+
+        if not parts:
+            # ctf_missing сам по себе поломкой не является — предупреждать
+            # о нём значило бы зря пугать пользователя переустановкой.
+            if ctf_missing:
+                return "\n" + _t("dlg_switcher_ctf_note", klids=", ".join(ctf_missing))
+            return ""
+
+        if switcher_missing or switcher_stale:
+            # Оба случая лечатся только сменой пользователя: профиль ввода
+            # живёт в сеанстве входа, и ни Set-WinUserLanguageList, ни
+            # перезапуск ctfmon его не обновляют (проверено на живой
+            # машине: после удаления панель продолжала показывать
+            # раскладку, хотя реестр и список языков были чисты).
+            return "\n" + "\n".join(parts) + "\n" + _t("dlg_switcher_signout_advice")
         return "\n" + "\n".join(parts) + "\n" + _t("dlg_switcher_advice")
 
     def _after_delete_error(self, error_msg: str) -> None:

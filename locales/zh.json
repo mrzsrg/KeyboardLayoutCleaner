@@ -89,8 +89,6 @@
   "dlg_switcher_missing_tip": "\n语言列表与切换器不一致：{klids} 已作为语言安装，但在切换器中不存在。",
   "dlg_switcher_stale_preload": "\n切换器中没有语言的过时条目：{klids}。",
   "dlg_switcher_advice": "\n请重启 Windows（或注销后再登录）以重建输入方法缓存。在此之前，某个布局可能不会出现在切换器中，即使它在语言设置中仍显示为已安装。",
-  "dlg_switcher_ctf_missing": "\n输入方法缓存 (CTF) 中没有以下项目的分支：{klids}。这些布局在语言列表中，但在重建缓存之前切换器无法显示它们。",
-  "dlg_switcher_ctf_advice": "\n已重启输入服务 (ctfmon) 以重建该缓存。如果布局仍未出现——请注销并重新登录（或重启）。此操作没有破坏任何内容：Windows 会在下次登录时重建 CTF 缓存。",
   "dlg_advice_ps_failed": "注册表已清理，但无法更新语言列表。详情见 layout_cleaner.log。",
   "dlg_advice_restore": "可通过“↩ 从备份还原”按钮恢复已删除的内容（merge：保存的值会应用到当前状态之上，之后新增的条目会保留）。",
   "dlg_advice_ctfmon": "输入服务（ctfmon）返回了 {count} 条记录——已再次删除。",
@@ -186,5 +184,9 @@
   "status_sync_block_failed": "阻止云同步失败",
   "status_sync_blocked": "云语言同步已阻止",
   "status_sync_unblocked": "云同步已解除阻止",
-  "dlg_elevation_association": "该文件未关联任何应用程序，Windows 无法启动它。\n请运行原始的可执行文件，而不是重命名后的副本。"
+  "dlg_elevation_association": "该文件未关联任何应用程序，Windows 无法启动它。\n请运行原始的可执行文件，而不是重命名后的副本。",
+  "dlg_switcher_absent": "\n切换列表中缺少设置里存在的键盘布局：{klids}。它们已安装，但无法使用。",
+  "dlg_switcher_session_stale": "\n切换列表中仍显示已从设置中删除的键盘布局：{klids}。删除已生效，但列表仍显示旧的内容。",
+  "dlg_switcher_signout_advice": "\n退出登录后重新登录：键盘切换列表只在登录时刷新。既重启输入服务，也不再同步列表都无法更新它——已在真实机器上验证。在重新登录之前差异会保留。",
+  "dlg_switcher_ctf_note": "参考：输入服务缓存（CTF）中没有对应的分支：{klids}。这不是故障：简单布局不需要它，并且在切换列表中可正常使用。"
 }

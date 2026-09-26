@@ -89,8 +89,6 @@
   "dlg_switcher_missing_tip": "\nThe language list and the switcher are out of sync: {klids} is installed as a language, but is missing from the switcher.",
   "dlg_switcher_stale_preload": "\nStale switch entries without a language: {klids}.",
   "dlg_switcher_advice": "\nReboot Windows (or sign out and back in) to rebuild the input-method cache. Until then, a layout may be missing from the switcher although it is still listed in Language settings.",
-  "dlg_switcher_ctf_missing": "\nInput-method cache (CTF) has no branch for: {klids}. These layouts are in the language list, but the switcher cannot show them until the cache is rebuilt.",
-  "dlg_switcher_ctf_advice": "\nThe input service (ctfmon) was restarted to rebuild that cache. If the layout is still missing — sign out and back in (or reboot). Nothing was broken by this operation: the CTF cache is rebuilt by Windows on next logon.",
   "dlg_advice_ps_failed": "The registry was cleaned, but the language list could not be refreshed. See layout_cleaner.log for details.",
   "dlg_advice_restore": "You can restore what was removed with the “↩ Restore from backup” button (merge: saved values are applied over the current registry, entries created later stay).",
   "dlg_advice_ctfmon": "The input service (ctfmon) brought back {count} entries — they were deleted again.",
@@ -186,5 +184,9 @@
   "brightness_ultra": "◐ Ultra (165%)",
   "status_busy_wait": "⏳ Wait for the current operation to finish",
   "list_row_terminal": "[KBD] {name}  |  entries: {count}",
-  "dlg_elevation_association": "The file is not associated with any application, so Windows cannot start it.\nRun the original executable, not a renamed copy."
+  "dlg_elevation_association": "The file is not associated with any application, so Windows cannot start it.\nRun the original executable, not a renamed copy.",
+  "dlg_switcher_absent": "\nThe switcher is missing layouts that are present in your settings: {klids}. They are installed but do not work.",
+  "dlg_switcher_session_stale": "\nThe switcher still shows layouts that were removed from your settings: {klids}. The removal worked, but the switcher is showing the previous set.",
+  "dlg_switcher_signout_advice": "\nSign out and back in: the layout switcher only refreshes at sign-in. Restarting the input service and re-syncing the list do not update it — verified on a real machine. The mismatch persists until you re-sign-in.",
+  "dlg_switcher_ctf_note": "\nFor reference: the input service cache (CTF) has no branch for: {klids}. This is not a fault — simple layouts do not need one and work fine in the switcher."
 }

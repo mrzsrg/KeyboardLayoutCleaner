@@ -27,6 +27,7 @@ import cleaner
 import config
 import langlist
 import scanner
+import winapi
 import winproc
 from conftest import fake_root_consts, registry_modules
 
@@ -1269,6 +1270,123 @@ class TestReviewHardening:
         assert cmd[-2] == "-JsonPath"  # путь — отдельный аргумент
         assert "Отчёты_и_Настройки" in cmd[-1]  # кириллица не искажена
         assert cmd[-1].endswith(".json")
+
+
+class TestSessionAwareSwitcherCheck:
+    """FIX-31: сверка с тем, что переключатель показывает ФАКТИЧЕСКИ.
+
+    Регрессия на замеренный на живой машине сбой. Удаление раскладки
+    убирает её из ``Preload`` и из списка языков немедленно, но панель
+    продолжает её показывать до следующего входа в систему. Прежняя
+    проверка сравнивала реестр с кешем CTF — оба только что были
+    приведены в порядок самой операцией — и на реально сломанном
+    переключателе рапортовала «всё в порядке».
+    """
+
+    @staticmethod
+    def _report(monkeypatch, list_klids, preload_klids, switcher_hkls):
+        """Собрать отчёт на заданном состоянии, ничего не трогая в системе."""
+        monkeypatch.setattr(
+            scanner,
+            "_get_language_list_from_powershell",
+            lambda: [
+                {"KeyboardLayoutId": klid} for klid in list_klids
+            ],
+        )
+        monkeypatch.setattr(
+            scanner, "_get_preload_keys", lambda *_a, **_k: list(preload_klids)
+        )
+        monkeypatch.setattr(
+            scanner,
+            "_get_switcher_klids",
+            lambda: set(switcher_hkls) if switcher_hkls is not None else None,
+        )
+        return scanner.check_switcher_consistency()
+
+    def test_stale_session_layout_is_reported(self, monkeypatch):
+        """ГЛАВНЫЙ сценарий: раскладка удалена из настроек, но не из панели."""
+        report = self._report(
+            monkeypatch,
+            list_klids=["00000419"],
+            preload_klids=["00000419"],
+            switcher_hkls={"00000419", "00000409"},  # 0x04190419 / 0x04090409
+        )
+        assert report["switcher_stale"] == ["00000409"]
+        assert report["switcher_missing"] == []
+        assert scanner.is_switcher_consistent(report) is False, (
+            "устаревшая раскладка в панели обязана считаться расхождением"
+        )
+
+    def test_layout_missing_from_session_is_reported(self, monkeypatch):
+        """Обратная асимметрия: настроена, но панель её не показывает."""
+        report = self._report(
+            monkeypatch,
+            list_klids=["00000419", "00000409"],
+            preload_klids=["00000419", "00000409"],
+            switcher_hkls={"00000419"},
+        )
+        assert report["switcher_missing"] == ["00000409"]
+        assert report["switcher_stale"] == []
+        assert scanner.is_switcher_consistent(report) is False
+
+    def test_matching_session_is_consistent(self, monkeypatch):
+        report = self._report(
+            monkeypatch,
+            list_klids=["00000419", "00000409"],
+            preload_klids=["00000419", "00000409"],
+            switcher_hkls={"00000419", "00000409"},
+        )
+        assert report["switcher_missing"] == []
+        assert report["switcher_stale"] == []
+        assert scanner.is_switcher_consistent(report) is True
+
+    def test_unreadable_session_yields_no_session_claims(self, monkeypatch):
+        """API недоступна — молчим, а не выдумываем расхождение.
+
+        Пустой список нельзя трактовать как «раскладок нет»: это превратило
+        бы непрочитанное состояние в ложный диагноз и совет выйти из
+        системы без всяких оснований.
+        """
+        report = self._report(
+            monkeypatch,
+            list_klids=["00000419"],
+            preload_klids=["00000419"],
+            switcher_hkls=None,  # прочитать не удалось
+        )
+        assert "switcher_missing" not in report
+        assert "switcher_stale" not in report
+        assert scanner.is_switcher_consistent(report) is True
+
+    def test_hkl_keyboard_type_is_stripped(self, monkeypatch):
+        """HKL 0x04190419 -> KLID 00000419: старшее слово — тип клавиатуры.
+
+        Если не отбросить его, сравнение с реестром не сойдётся никогда.
+        """
+        fake = mock.Mock()
+        fake.get_keyboard_layout_list.return_value = [0x04190419, 0x04090409]
+        monkeypatch.setitem(sys.modules, "winapi", fake)
+        assert scanner._get_switcher_klids() == {"00000419", "00000409"}
+
+
+class TestGetKeyboardLayoutList:
+    """FIX-31: обёртка winapi поверх прототипа GetKeyboardLayoutList."""
+
+    def test_empty_count_means_unavailable(self, monkeypatch):
+        """Ноль возвращённых элементов — это «не прочитано», не «пусто»."""
+        monkeypatch.setattr(winapi.user32, "GetKeyboardLayoutList", lambda *_a: 0)
+        assert winapi.get_keyboard_layout_list() == []
+
+    def test_buffer_is_sized_from_argument(self, monkeypatch):
+        """Размер буфера задаётся аргументом, а не подставляется на глаз."""
+        seen = {}
+
+        def _fake(count, buffer):
+            seen["count"] = count
+            return 0
+
+        monkeypatch.setattr(winapi.user32, "GetKeyboardLayoutList", _fake)
+        winapi.get_keyboard_layout_list(limit=8)
+        assert seen["count"] == 8
 
 
 if __name__ == "__main__":

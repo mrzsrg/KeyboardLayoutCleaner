@@ -10,12 +10,12 @@ mutex.py — Механизм синхронизации для предотвр
 - Перезапуска с сохранением мьютекса (elevate)
 """
 
-import ctypes
 import logging
 import os
 import time
 from collections.abc import Callable
 
+import winapi
 from config import TIMEOUTS
 
 logger = logging.getLogger("layout_cleaner")
@@ -55,8 +55,7 @@ def confirm_wait_dialog(seconds: int) -> bool:
         True — продолжать ожидание, False — пользователь отменил.
     """
     try:
-        result = ctypes.windll.user32.MessageBoxW(
-            None,
+        result = winapi.message_box(
             "Предыдущий экземпляр приложения ещё завершается.\n"
             f"Ожидать освобождения (до {seconds} сек)?\n\n"
             "«Отмена» — не запускать приложение сейчас.",
@@ -101,16 +100,17 @@ def acquire_mutex(
     pid = os.getpid()
     logger.info("[PID=%d] Попытка захвата мьютекса (is_elevate=%s)", pid, is_elevate)
 
-    # Первичная попытка
-    h = ctypes.windll.kernel32.CreateMutexW(None, False, mutex_name)
-    err = ctypes.windll.kernel32.GetLastError()
+    # Первичная попытка. FIX-19: хэндл — 64-битный указатель, а код ошибки
+    # читается сразу после вызова (см. winapi.create_mutex).
+    h, err = winapi.create_mutex(mutex_name, False)
     logger.info("[PID=%d] CreateMutexW: handle=%s, error=%d", pid, h, err)
 
     if err == ERROR_ALREADY_EXISTS:
         # Мьютекс уже существует — есть старый процесс.
         # Закрываем свой handle на существующий мьютекс,
         # иначе мьютекс никогда не освободится!
-        ctypes.windll.kernel32.CloseHandle(h)
+        if h is not None:
+            winapi.close_handle(h)
 
         # Если это НЕ перезапуск от админа — не ждём 60 секунд,
         # выходим сразу. Пользователь случайно кликнул по второй копии.
@@ -142,10 +142,9 @@ def acquire_mutex(
                     return None, ERROR_CANCELLED
 
             # Второй параметр True — номинален здесь, так как мьютекс уже
-            # существует (создан первым процессом). Нам важно только
-            # GetLastError(), чтобы узнать, всё ещё ли он удерживается.
-            h = ctypes.windll.kernel32.CreateMutexW(None, True, mutex_name)
-            err = ctypes.windll.kernel32.GetLastError()
+            # существует (создан первым процессом). Нам важен только код
+            # ошибки CreateMutexW, чтобы узнать, всё ещё ли он удерживается.
+            h, err = winapi.create_mutex(mutex_name, True)
             if err != ERROR_ALREADY_EXISTS:
                 # Успех! Старый процесс освободил мьютекс,
                 # мы стали владельцами
@@ -157,7 +156,8 @@ def acquire_mutex(
                 )
                 break
             # Мьютекс всё ещё существует — закрываем handle и ждём
-            ctypes.windll.kernel32.CloseHandle(h)
+            if h is not None:
+                winapi.close_handle(h)
             h = None
             if attempt % 20 == 0 and attempt > 0:
                 logger.info(
@@ -198,6 +198,5 @@ def release_mutex(handle: int | None) -> int:
     pid = os.getpid()
     if handle and handle != 0:
         logger.info("[PID=%d] Закрытие мьютекса (handle=%d)", pid, handle)
-        result = ctypes.windll.kernel32.CloseHandle(handle)
-        return 0 if result else ctypes.windll.kernel32.GetLastError()
+        return winapi.close_handle(handle)
     return 0

@@ -10,7 +10,7 @@ python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
 .\.venv\Scripts\python.exe -m pip install pyinstaller
 .\.venv\Scripts\python.exe -m ruff check .
-.\.venv\Scripts\python.exe -m mypy main.py mutex.py scanner.py cleaner.py config.py winproc.py applog.py i18n.py gui_widgets.py ui_theme.py
+.\.venv\Scripts\python.exe -m mypy main.py mutex.py scanner.py cleaner.py config.py winproc.py applog.py i18n.py gui_widgets.py ui_theme.py layout_ids.py winapi.py backup.py mutate.py langlist.py settings.py
 .\.venv\Scripts\python.exe -m pytest -m "not live" --cov
 ```
 
@@ -63,4 +63,9 @@ Get-FileHash KeyboardLayoutCleaner-portable.zip -Algorithm SHA256
 В релизе укажите коммит исходников, результаты проверок и SHA256 архива.
 Не включайте пользовательские логи, настройки и бэкапы реестра.
 Неподписанный EXE может вызывать предупреждение SmartScreen; цифровая подпись
-опциональна (см. `sign_exe.py` и workflow CI).
+опциональна (см. `sign_exe.py` и workflow CI), но не гарантирует отсутствие
+предупреждений или антивирусных обнаружений. FileVersion — метаданные, а не подпись.
+При блокировке сборки не добавляйте исключения и не распространяйте её как
+проверенную: сохраните сведения о детекте и направьте образец на анализ
+производителю антивируса. Порядок действий и сведения для отчёта приведены в
+[README — Антивирус / SmartScreen](README.md#антивирус--smartscreen).

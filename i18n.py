@@ -9,17 +9,18 @@ Windows (GetUserDefaultUILanguage).
 
 import json
 import logging
-from ctypes import windll
-from pathlib import Path
 
 import applog
+import winapi
 
 logger = logging.getLogger("layout_cleaner")
 applog.setup_null_handler(logger)
 
 SUPPORTED = ("en", "ru", "es", "de", "zh", "pt")
 FALLBACK = "en"
-LOCALES_DIR = Path(__file__).resolve().parent / "locales"
+# FIX-20: путь к данным рантайма строит applog.resource_path (единый
+# источник истины). Раньше был Path(__file__).resolve().parent / "locales".
+LOCALES_DIR = applog.resource_path("locales")
 
 # Первичный язык LCID (младший байт) -> код локали приложения
 _PRIMARY_TO_LANG = {
@@ -48,7 +49,8 @@ current_lang: str = FALLBACK
 def detect_system_lang() -> str:
     """Определить язык интерфейса Windows (с fallback на en)."""
     try:
-        lang_id = int(windll.kernel32.GetUserDefaultUILanguage())
+        # FIX-19: вызов WinAPI с объявленным прототипом идёт через winapi.
+        lang_id = winapi.get_user_default_ui_language()
         return _PRIMARY_TO_LANG.get(lang_id & 0xFF, FALLBACK)
     except Exception:
         logger.exception("Не удалось определить язык системы — fallback: %s", FALLBACK)

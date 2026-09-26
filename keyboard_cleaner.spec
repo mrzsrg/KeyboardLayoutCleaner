@@ -91,7 +91,18 @@ a = Analysis(
     pathex=[],
     binaries=[],
     datas=datas,
-    hiddenimports=["config"],
+    hiddenimports=[
+        # Модули без побочных эффектов при импорте, которые PyInstaller
+        # может не заметить при анализе графа (FIX-8: единый резолвер
+        # идентификаторов раскладок).
+        "config",
+        "layout_ids",
+        "winapi",
+        "backup",
+        "mutate",
+        "langlist",
+        "settings",
+    ],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

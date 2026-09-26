@@ -3,24 +3,26 @@ sign_exe.py — Подпись exe-файла через signtool.exe (Windows S
 
 Поддерживает два режима:
   - PFX: подпись сертификатом из .pfx файла с паролем
-  - ESTS: подпись через Microsoft Authenticode ESTS (без сертификата, SmartScreen trusted)
+  - STORE: автовыбор сертификата из хранилища Windows (signtool /a)
 
 Запуск:
   python sign_exe.py --exe path/to/exe --pfx path/to.pfx --pfx-pass password
-  python sign_exe.py --exe path/to/exe --ests
+  python sign_exe.py --exe path/to/exe --store
   python sign_exe.py --exe path/to/exe --pfx path/to.pfx --pfx-pass password --tsa-url https://timestamp.digicert.com
 
 Параметры:
   --exe        путь к exe-файлу
-  --pfx        путь к .pfx файлу (обязательно, если не --ests)
+  --pfx        путь к .pfx файлу (обязательно, если не --store)
   --pfx-pass   пароль от .pfx
-  --ests       использовать Microsoft Authenticode ESTS (timestamp без сертификата)
+  --store      использовать сертификат из личного хранилища Windows (автовыбор)
   --tsa-url    URL сервера отметки времени (по умолчанию: https://timestamp.digicert.com)
+  --verify     только проверить подпись
   --verbose    подробный вывод
 
 Требования:
   - Windows 10/11
   - Windows SDK (signtool.exe в PATH) или удалённый компилятор
+  - Для --store: установленный сертификат подписи кода в личном хранилище пользователя
 """
 
 import argparse
@@ -92,40 +94,37 @@ def sign_with_pfx(
     return False
 
 
-def sign_with_ests(
+def sign_with_store(
     exe_path: Path,
-    tsa_url: str,
+    tsa_url: str | None = None,
     signtool: Path | None = None,
 ) -> bool:
     """
-    Подписать exe-файл через Microsoft Authenticode ESTS.
+    Подписать exe-файл сертификатом из хранилища Windows (автовыбор).
 
-    ESTS позволяет получить доверенную отметку времени без сертификата —
-    SmartTrust / Sectigo / DigiCert доверяют таким отметкам, и SmartScreen
-    не будет блокировать файл.
+    Использует signtool /a — автоматический выбор лучшего сертификата
+    подписи кода из личного хранилища текущего пользователя.
+    Требует установленного сертификата подписи кода.
     """
     st = signtool or find_signtool()
     cmd = [
         str(st),
         "sign",
-        "/tr",
-        tsa_url,
-        "/td",
-        "SHA256",
+        "/a",
         "/fd",
         "SHA256",
-        "/d",
-        "Keyboard Layout Cleaner",
-        "/du",
-        "https://github.com/mrzsrg/KeyboardLayoutCleaner",
+        "/td",
+        "SHA256",
     ]
+    if tsa_url:
+        cmd.extend(["/tr", tsa_url, "/td", "SHA256"])
     cmd.append(str(exe_path))
-    logger.info("Подпись через ESTS: %s", exe_path)
+    logger.info("Подпись из хранилища Windows: %s", exe_path)
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
     if result.returncode == 0:
-        logger.info("✅ Подпись ESTS успешна")
+        logger.info("✅ Подпись успешна")
         return True
-    logger.error("❌ Подпись ESTS не удалась: %s", result.stderr)
+    logger.error("❌ Подпись не удалась: %s", result.stderr)
     return False
 
 
@@ -151,9 +150,9 @@ def main() -> None:
     parser.add_argument("--pfx", help="Путь к .pfx файлу")
     parser.add_argument("--pfx-pass", help="Пароль от .pfx")
     parser.add_argument(
-        "--ests",
+        "--store",
         action="store_true",
-        help="Использовать Microsoft Authenticode ESTS (timestamp без PFX)",
+        help="Использовать сертификат из хранилища Windows (автовыбор /a)",
     )
     parser.add_argument(
         "--tsa-url",
@@ -184,14 +183,19 @@ def main() -> None:
         ok = verify_signature(exe_path, signtool)
         sys.exit(0 if ok else 1)
 
-    if args.ests:
-        ok = sign_with_ests(exe_path, args.tsa_url, signtool)
+    if args.store:
+        ok = sign_with_store(exe_path, args.tsa_url, signtool)
     elif args.pfx and args.pfx_pass:
         ok = sign_with_pfx(
             exe_path, Path(args.pfx), args.pfx_pass, args.tsa_url, signtool
         )
     else:
-        logger.error("Укажите --pfx + --pfx-pass или --ests для ESTS-подписи")
+        logger.error(
+            "Необходимо указать способ подписи:\n"
+            "  --pfx <файл> --pfx-pass <пароль>  — подпись из .pfx файла\n"
+            "  --store                            — подпись из хранилища Windows (требует сертификат подписи кода)\n"
+            "Используйте --verify для проверки подписи без изменения файла."
+        )
         sys.exit(1)
 
     sys.exit(0 if ok else 1)

@@ -12,8 +12,24 @@
 
 ## 3. Архитектура и Этапы Разработки
 
+### Этап 0: Единый резолвер идентификаторов (layout_ids.py, FIX-8)
+- [x] Единственное место, где живут таблицы и нормализаторы раскладок:
+  `LAYOUT_MAP` (BCP-47 → KLID), `CJK_KLIDS`, `KLID_TO_TAGS`,
+  `KLID_RE` / `TIP_KLID_RE` / `METADATA_VALUE_NAMES`,
+  `normalize_klid_token`, `klid_variants`, `klid_to_tags`,
+  `bcp47_to_klid`, `parse_tip`, HKL-математика (`decimal_to_hkl`,
+  `hkl_to_decimal`, `hkl_string_forms`, `klid_low_word`), `cjk_map_json`.
+- [x] `scanner.py` и `cleaner.py` импортируют модуль; локальные копии
+  удалены, прежние имена сохранены тонкими обёртками. Расхождение копий
+  означало бы «сканер нашёл раскладку, очистка её не тронула» — теперь
+  такой класс дефекта невозможен конструктивно.
+- [x] CJK-карта передаётся в PowerShell параметром `-CjkMapJson`, а не
+  дублируется в `.ps1`.
+- Инвариант «сканер и cleaner видят одно и то же» закреплён тестами
+  `TestScanCleanParity` (FIX-7).
+
 ### Этап 1: Модуль поиска и сопоставления (scanner.py)
-- [x] Динамическое чтение названий раскладок из `HKLM:\SYSTEM\CurrentControlSet\Control\Keyboard Layouts` + fallback-словарь `LAYOUT_MAP`.
+- [x] Динамическое чтение названий раскладок из `HKLM:\SYSTEM\CurrentControlSet\Control\Keyboard Layouts` + fallback-словарь `LAYOUT_MAP` (из `layout_ids`).
 - [x] Конвертер/сопоставитель BCP-47 (например, `en-GB`) и KLID HEX-кодов (например, `00000809`).
 - [x] Сканер реестра текущего пользователя (`HKCU`):
   - `HKCU:\Keyboard Layout\Preload`
@@ -57,22 +73,48 @@ keyboard-layout-cleaner/
 ├── main.py              # GUI-приложение (CustomTkinter), точка входа
 ├── __main__.py          # Запуск каталога: python .
 ├── config.py            # Центральные константы (SANDBOX_ROOT, SANDBOX_MODE, версия)
+├── layout_ids.py        # Единый резолвер KLID/BCP-47/CJK (FIX-8)
+├── winapi.py            # Прототипы WinAPI (проверка версии Windows)
 ├── scanner.py           # Сканер реестра (+ CLI: --sandbox / --json)
-├── cleaner.py           # Бэкап и удаление (+ CLI: --plan / --json / --sandbox)
+├── cleaner.py           # Оркестратор: план, удаление, отчёт, CLI
+├── backup.py            # Регистрационный бэкап/восстановление .reg (FIX-10, шаг 1)
+├── mutate.py            # Предикаты сопоставления и мутация реестра (FIX-10, шаг 2)
+├── langlist.py          # Список языков: снимок/применение/восстановление (FIX-10, шаг 3)
+├── settings.py          # SettingSync и Экран приветствия (FIX-10, шаг 4)
 ├── mutex.py             # Мьютекс защиты от параллельных запусков
 ├── winproc.py           # Запуск процессов/PowerShell (run_hidden)
 ├── gui_widgets.py       # Переиспользуемые GUI-компоненты (AdminBanner/ActionButtons/StatusBar)
 ├── ui_theme.py          # Темы оформления
 ├── i18n.py              # Локализация
-├── applog.py            # Настройка журналирования
+├── applog.py            # Настройка журналирования и resource_path
 ├── sign_exe.py          # Подпись .exe через signtool (опционально в CI)
 ├── keyboard_cleaner.spec  # Спека PyInstaller
 ├── locales/             # Файлы переводов (en, ru, es, de, zh, pt)
 ├── scripts/             # PowerShell-скрипты (список языков, бэкап/восстановление)
-├── conftest.py          # Фикстуры pytest (FakeWinreg и др.)
+├── conftest.py          # Фикстуры pytest (FakeWinreg, registry_modules и др.)
 ├── test_*.py            # Юнит-тесты (FakeWinreg/mock) и live-тесты (sandbox-ключ)
 └── ARCHITECTURE.md      # Этот файл
 ```
+
+### Границы модулей (FIX-10)
+
+`cleaner.py` разделён по границам, которые можно доказать тестами
+(`test_module_boundaries.py`). `cleaner` остаётся оркестратором и
+**реэкспортирует** имена вынесенных модулей, поэтому
+`cleaner.backup_registry` и прочий публичный API не изменились.
+
+| Модуль | Зона ответственности |
+|---|---|
+| `backup.py` | Экспорт/импорт `.reg`, проверка файла, список бэкапов, `_ROOT_CONST` |
+| `mutate.py` | Предикаты сопоставления, снимок и манифест FIX-6, сама мутация, резолверы веток |
+| `langlist.py` | Снимок списка языков, разбор, восстановление, весь PS-адаптер списка языков |
+| `settings.py` | `SettingSync\Groups\Language`, `Copy-UserInternationalSettingsToSystem` (FIX-4) |
+| `cleaner.py` | План, дрейф плана, `delete_layout`, отчётность, CTF-сервисы, CLI |
+
+Правило, общее для всех этих модулей: **обращение к общему состоянию
+через модуль** (`backup._ROOT_CONST`, `mutate._sandbox_active()`), а не
+привязкой именем. Привязка копирует значение на момент импорта, и
+подмена в тестах перестаёт действовать — молча, без исключения.
 
 ## 5. Безопасность
 

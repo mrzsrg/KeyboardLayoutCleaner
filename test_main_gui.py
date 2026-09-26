@@ -9,7 +9,6 @@ Uses shared mocks from conftest.py:
 - conftest._ensure_main(monkeypatch) - clean main.py import
 """
 
-import ctypes
 import sys
 from unittest import mock
 
@@ -432,14 +431,16 @@ class TestAcquireMutex:
     """Tests for _acquire_mutex function."""
 
     def test_success(self, monkeypatch):
-        """_acquire_mutex successfully creates mutex."""
+        """_acquire_mutex successfully creates mutex.
+
+        FIX-19: шов — winapi.create_mutex (через mutex), а не ctypes.windll.
+        """
         _ensure_main(monkeypatch)
         import main
+        import mutex
 
-        mock_kernel32 = mock.MagicMock()
-        mock_kernel32.CreateMutexW.return_value = 42
-        mock_kernel32.GetLastError.return_value = 0
-        monkeypatch.setattr(ctypes.windll, "kernel32", mock_kernel32)
+        create = mock.MagicMock(return_value=(42, 0))
+        monkeypatch.setattr(mutex.winapi, "create_mutex", create)
         handle, error = main._acquire_mutex()
         assert handle == 42
         assert error == 0
@@ -450,13 +451,11 @@ class TestAcquireMutex:
         import main
         import mutex
 
-        mock_kernel32 = mock.MagicMock()
-        mock_kernel32.CreateMutexW.return_value = 42
-        mock_kernel32.GetLastError.return_value = 183
-        monkeypatch.setattr(ctypes.windll, "kernel32", mock_kernel32)
+        create = mock.MagicMock(side_effect=[(42, 183), (42, 0)])
+        close = mock.MagicMock(return_value=0)
+        monkeypatch.setattr(mutex.winapi, "create_mutex", create)
+        monkeypatch.setattr(mutex.winapi, "close_handle", close)
         monkeypatch.setattr(mutex.time, "sleep", lambda *a, **k: None)
-        mock_kernel32.CreateMutexW.side_effect = [42, 42]
-        mock_kernel32.GetLastError.side_effect = [183, 0]
         handle, error = main._acquire_mutex(is_elevate=True)
         assert handle == 42
         assert error == 0
@@ -469,17 +468,24 @@ class TestRunAsAdmin:
     """Tests for _restart_as_admin method."""
 
     def test_calls_shellexecute(self, monkeypatch):
-        """_restart_as_admin calls ShellExecuteW."""
+        """_restart_as_admin вызывает ShellExecuteW.
+
+        FIX-19: вызов идёт через winapi.shell_execute, поэтому подменяется
+        именно он. Старая подмена ``main_mod.ctypes.windll.shell32`` после
+        перехода перестала бы затрагивать код, и тест пошёл бы в НАСТОЯЩИЙ
+        ShellExecuteW("runas") — то есть показал бы пользователю реальный
+        запрос UAC и подвесил прогон.
+        """
         main_mod, app = _make_app(monkeypatch)
-        mock_shell32 = mock.MagicMock()
-        mock_shell32.ShellExecuteW.return_value = 42
-        monkeypatch.setattr(main_mod.ctypes.windll, "shell32", mock_shell32)
+        mock_shell = mock.MagicMock(return_value=(42, 0))
+        monkeypatch.setattr(main_mod.winapi, "shell_execute", mock_shell)
         with (
             mock.patch.object(main_mod.sys, "exit"),
             mock.patch.object(main_mod.threading, "Thread"),
         ):
             app._restart_as_admin()
-        mock_shell32.ShellExecuteW.assert_called()
+        mock_shell.assert_called()
+        assert mock_shell.call_args[0][0] == "runas"
 
 
 # ---------------------------------------------------------------------------

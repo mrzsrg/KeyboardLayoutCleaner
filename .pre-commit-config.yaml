@@ -29,8 +29,10 @@ repos:
       - id: trailing-whitespace
       - id: check-merge-conflict
       - id: debug-statements
-      - id: fix-encoding-pragma
-        args: ['--add']
+      # Хук fix-encoding-pragma УДАЛЁН (FIX-21): он добавляет
+      # `# -*- coding: utf-8 -*-` во ВСЕ файлы. Для Python 3 кодировка
+      # всегда UTF-8, прагмы в проекте нет ни в одном модуле, поэтому
+      # первый же запуск pre-commit создал бы шумный диф по всей базе.
 
   - repo: https://github.com/codespell-project/codespell
     rev: v2.4.1

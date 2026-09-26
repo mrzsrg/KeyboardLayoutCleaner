@@ -54,7 +54,7 @@ jobs:
         # и в CI (на стороне мейнтейнера) — так ошибки не проскальзывают.
         # Передаём файлы явно: flat-структура с __main__.py конфликтует
         # при рекурсивном сканировании (.).
-        run: python -m mypy main.py mutex.py scanner.py cleaner.py config.py winproc.py applog.py i18n.py gui_widgets.py ui_theme.py
+        run: python -m mypy main.py mutex.py scanner.py cleaner.py config.py winproc.py applog.py i18n.py gui_widgets.py ui_theme.py layout_ids.py winapi.py backup.py mutate.py langlist.py settings.py
 
   test:
     name: Unit tests (Python ${{ matrix.python-version }})
@@ -81,6 +81,10 @@ jobs:
         # fail_under вынесен в pyproject.toml — проверяется автоматически.
         run: |
           python -m pytest -m "not live" -v --tb=short --cov --cov-report=term-missing:skip-covered --cov-report=xml
+      - name: Check per-module coverage invariants (FIX-23)
+        # coverage не умеет порог «модуль не ниже общего», а для cleaner.py
+        # (который пишет в реестр) это и есть нужный критерий.
+        run: python scripts/check_coverage.py
       - name: Upload coverage report
         if: always()
         uses: actions/upload-artifact@v4

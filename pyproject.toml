@@ -24,7 +24,11 @@ classifiers = [
     "Topic :: Utilities",
 ]
 dependencies = [
-    "customtkinter>=5.2.0",
+    # FIX-21: ограничение согласовано с requirements.in (>=5.2,<7) и с
+    # lock-файлом requirements.txt (6.0.0). Раньше здесь стояло
+    # `customtkinter>=5.2.0` без верхней границы — установка могла
+    # притащить несовместимую 7.x.
+    "customtkinter>=6.0.0,<7",
 ]
 
 # ВАЖНО: `pip install .` НЕ является поддерживаемым способом установки.
@@ -60,11 +64,25 @@ source = [
     "i18n",
     "gui_widgets",
     "ui_theme",
+    "layout_ids",
+    "winapi",
+    "backup",
+    "mutate",
+    "langlist",
+    "settings",
 ]
 omit = ["*/conftest.py", "*/test_*.py", "*/__init__.py"]
 
 [tool.coverage.report]
-fail_under = 50
+# FIX-23: порог поднят с 50 до 60 (план задачи: ≥ 60). Фактическое
+# покрытие на текущей базе — 70 %, порог 70 не ставим сознательно:
+# он совпал бы с фактом вплоть до десятых долей и «мигал» бы при любом
+# добавлении кода. Запас оставлен намеренно.
+#
+# Дополнительный критерий «cleaner.py не ниже общего» выполняется
+# (74 % против 70 %) и проверяется скриптом scripts/check_coverage.py,
+# который запускается в CI после прогона тестов.
+fail_under = 60
 
 [tool.setuptools]
 # Плоский модульный layout: явно перечисляем модули приложения, чтобы
@@ -80,6 +98,12 @@ py-modules = [
     "i18n",
     "gui_widgets",
     "ui_theme",
+    "layout_ids",
+    "winapi",
+    "backup",
+    "mutate",
+    "langlist",
+    "settings",
 ]
 
 [tool.mypy]

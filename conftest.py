@@ -15,6 +15,46 @@ from unittest import mock
 import pytest
 
 
+def registry_modules() -> list[types.ModuleType]:
+    """Все модули приложения, у которых есть собственный глобальный ``winreg``.
+
+    FIX-10 (шаг 4). Список берётся с диска, а не перечисляется ни здесь, ни
+    в тестах.
+
+    Почему динамически: перечисление молча устаревало при каждом переносе
+    кода, и новый модуль выпадал из подмены. На шаге 4 из-за этого
+    ``TestLanguageSync`` выполнил ``disable_language_sync()`` через
+    НАСТОЯЩИЙ winreg и записал ``SettingSync\\Groups\\Language`` в реальный
+    HKCU машины, на которой шли тесты. Никакое перечисление — ни в тесте, ни
+    даже в conftest — такую ошибку не ловит: оно не знает про модуль,
+    которого в нём нет.
+    """
+    import importlib
+
+    root = Path(__file__).resolve().parent
+    found: list[types.ModuleType] = []
+    for path in sorted(root.glob("*.py")):
+        name = path.stem
+        if name.startswith(("test_", "conftest", "__", "setup")):
+            continue
+        try:
+            module = importlib.import_module(name)
+        except Exception:  # noqa: BLE001 — модуль может требовать GUI/ОС
+            continue
+        if hasattr(module, "winreg"):
+            found.append(module)
+    return found
+
+
+def fake_root_consts(fake) -> dict[str, int]:
+    """``_ROOT_CONST`` на константы фейкового winreg (иначе lookup не совпадёт)."""
+    return {
+        "HKCU": fake.HKEY_CURRENT_USER,
+        "HKU": fake.HKEY_USERS,
+        "HKLM": fake.HKEY_LOCAL_MACHINE,
+    }
+
+
 class FakeKey:
     """Registry key handle for FakeWinreg."""
 
@@ -128,6 +168,14 @@ class FakeWinreg:
         root_key, path = self._resolve(root, "")
         node = self.nodes.setdefault((root_key, path), {"v": {}, "kids": set()})
         node["v"][name] = (value, val_type)
+
+    def DeleteValue(self, key, name):  # noqa: N802
+        """Удалить значение ключа (нужно для прогонов реального _wipe_branches)."""
+        root, path = self._resolve(key, "")
+        node = self.nodes.get((root, path))
+        if node is None or name not in node["v"]:
+            raise FileNotFoundError(f"Value not found: {name}")
+        del node["v"][name]
 
     def CreateKeyEx(self, root, subkey_path, *args, **kwargs):  # noqa: N802
         root_key, path = self._resolve(root, subkey_path)
@@ -247,6 +295,12 @@ def _make_ctk():  # noqa: C901 - тестовый мок customtkinter: наме
         def after_cancel(self, *a, **k):
             pass
 
+        def protocol(self, *a, **k):
+            """FIX-13: приложение регистрирует WM_DELETE_WINDOW — мок-приёмник."""
+            self._protocol_handlers = getattr(self, "_protocol_handlers", {})
+            if len(a) >= 2:
+                self._protocol_handlers[a[0]] = a[1]
+
         def mainloop(self):
             pass
 
@@ -358,9 +412,14 @@ def _make_ctk():  # noqa: C901 - тестовый мок customtkinter: наме
     ):
         setattr(ctk, cls, _mk(cls))
 
-    ctk.ScalingTracker = type("S", (), {"get_window_scaling": lambda *a: 1.0})
-    ctk.set_appearance_mode = lambda *a: None
-    ctk.set_default_color_theme = lambda *a: None
+    # Присваиваем модулю атрибуты, которых в нём нет: customtkinter без
+    # type-стабов, поэтому mypy видит module-has-no-attribute. Заглушки
+    # нужны тестам GUI, а не библиотеке.
+    ctk.ScalingTracker = type(  # type: ignore[attr-defined]
+        "S", (), {"get_window_scaling": lambda *a: 1.0}
+    )
+    ctk.set_appearance_mode = lambda *a: None  # type: ignore[attr-defined]
+    ctk.set_default_color_theme = lambda *a: None  # type: ignore[attr-defined]
     for fn in (
         "deactivate_automatic_dpi_awareness",
         "enable_undocked_window_scaling",
@@ -433,9 +492,10 @@ def _make_gui_widgets_mock():
         def pack(self, *a, **k):
             pass
 
-    gw.StatusBar = MockStatusBar
-    gw.ActionButtons = MockActionButtons
-    gw.AdminBanner = MockAdminBanner
+    # См. пояснение выше про type: ignore[attr-defined].
+    gw.StatusBar = MockStatusBar  # type: ignore[attr-defined]
+    gw.ActionButtons = MockActionButtons  # type: ignore[attr-defined]
+    gw.AdminBanner = MockAdminBanner  # type: ignore[attr-defined]
     return gw
 
 
@@ -465,8 +525,11 @@ def _ensure_main(monkeypatch):
     ):
         main_mod = importlib.import_module("main")
     registry = FakeWinreg()
-    monkeypatch.setattr(sys.modules["scanner"], "winreg", registry)
-    monkeypatch.setattr(sys.modules["cleaner"], "winreg", registry)
+    # FIX-10 (шаг 4): список берётся динамически. Раньше подменялись только
+    # scanner и cleaner, и GUI-тест, читающий состояние синхронизации, ходил
+    # в настоящий реестр за новым модулем settings.
+    for module in registry_modules():
+        monkeypatch.setattr(module, "winreg", registry)
     return main_mod
 
 

@@ -31,6 +31,34 @@ def get_app_dir() -> Path:
     return Path(__file__).resolve().parent
 
 
+def resource_path(*parts: str) -> Path:
+    """
+    Путь к файлу данных, поставляемому вместе с программой (FIX-20).
+
+    Раньше модули строили такие пути как ``Path(__file__).parent / "scripts"``.
+    Это работает только пока файлы лежат рядом с модулями: любая
+    реструктуризация (перенос в подпакет, FIX-10/11) или смена способа
+    сборки ломала бы пути МОЛЧА — приложение падало бы с «файл не найден»
+    уже во время операции, а не при старте.
+
+    Здесь один источник истины:
+      * собранный .exe — ``sys._MEIPASS`` (PyInstaller распаковывает
+        data-файлы туда же, независимо от onedir/onefile);
+      * dev-режим — каталог модуля.
+
+    Returns
+    -------
+    Path
+        Путь; существование НЕ проверяется — вызывающий код решает, что
+        делать с отсутствующим файлом (обычно это ошибка сборки).
+    """
+    if getattr(sys, "frozen", False):
+        base = Path(getattr(sys, "_MEIPASS", Path(sys.executable).resolve().parent))
+    else:
+        base = Path(__file__).resolve().parent
+    return base.joinpath(*parts) if parts else base
+
+
 def get_logger() -> logging.Logger:
     """Вернуть общий логгер приложения."""
     return logging.getLogger(LOGGER_NAME)

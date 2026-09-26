@@ -324,5 +324,105 @@ class TestActiveLangCache:
         assert m._active_lang_cache("00000409", {}) is False
 
 
+class TestParentSidGuard:
+    """FIX-14: elevation под чужой учётной записью не переключает профиль."""
+
+    def test_parse_args_accepts_parent_sid(self, monkeypatch):
+        _patch_main(monkeypatch, frozen=False)
+        import main
+
+        args = main.parse_args(["--elevate", "--parent-sid", "S-1-5-21-1-2-3"])
+        assert args.elevate is True
+        assert args.parent_sid == "S-1-5-21-1-2-3"
+
+    def test_parse_args_parent_sid_default_empty(self, monkeypatch):
+        _patch_main(monkeypatch, frozen=False)
+        import main
+
+        args = main.parse_args([])
+        assert args.parent_sid == ""
+
+    def test_current_user_sid_returns_string_or_empty(self, monkeypatch):
+        """Реальный токен процесса (read-only API)."""
+        _patch_main(monkeypatch, frozen=False)
+        import main
+
+        sid = main._current_user_sid()
+        assert isinstance(sid, str)
+        assert sid == "" or sid.startswith("S-1-")
+
+    def test_restart_command_includes_parent_sid(self, monkeypatch):
+        """FIX-19: ShellExecuteW вызывается через winapi.shell_execute.
+
+        Прежняя подмена ``main.ctypes`` после перехода перестала бы
+        действовать, и тест пошёл бы в НАСТОЯЩИЙ ShellExecuteW("runas") —
+        то есть показал бы пользователю реальный запрос UAC.
+        """
+        _patch_main(monkeypatch, frozen=False)
+        import main
+
+        calls = []
+
+        def fake_shell_execute(*args, **kwargs):
+            calls.append(args)
+            return 42, 0  # >32 — успех
+
+        monkeypatch.setattr(main.winapi, "shell_execute", fake_shell_execute)
+        monkeypatch.setattr(main, "_current_user_sid", lambda: "S-1-5-21-PARENT")
+
+        app = main.KeyboardLayoutCleaner.__new__(main.KeyboardLayoutCleaner)
+        app.admin_btn = type("Btn", (), {"configure": staticmethod(lambda **k: None)})()
+        app._is_elevating = False
+        monkeypatch.setattr(app, "_release_mutex_and_exit", lambda: None)
+
+        app._restart_as_admin()
+        assert calls, "ShellExecuteW должен быть вызван"
+        # (operation, file, parameters, directory, show_cmd)
+        assert calls[0][0] == "runas"
+        params = calls[0][2]
+        assert "--elevate" in params
+        assert "--parent-sid S-1-5-21-PARENT" in params
+
+    def test_verify_allows_without_flag(self, monkeypatch):
+        _patch_main(monkeypatch, frozen=False)
+        import main
+
+        # Нет --elevate ИЛИ нет --parent-sid — проверка не применяется
+        # (запуск вручную из консоли или старая elevate-цепочка).
+        assert main._verify_elevated_context(main.parse_args([])) is True
+        assert main._verify_elevated_context(main.parse_args(["--elevate"])) is True
+
+    def test_verify_allows_same_sid(self, monkeypatch):
+        _patch_main(monkeypatch, frozen=False)
+        import main
+
+        monkeypatch.setattr(main, "_current_user_sid", lambda: "S-1-5-21-PARENT")
+        args = main.parse_args(["--elevate", "--parent-sid", "S-1-5-21-PARENT"])
+        assert main._verify_elevated_context(args) is True
+
+    def test_verify_refuses_foreign_sid(self, monkeypatch):
+        """Главный сценарий FIX-14: UAC под другим админом → отказ."""
+        _patch_main(monkeypatch, frozen=False)
+        import main
+
+        monkeypatch.setattr(main, "_current_user_sid", lambda: "S-1-5-21-CHILD")
+        warned = []
+        monkeypatch.setattr(
+            main, "_warn_foreign_profile", lambda p, c: warned.append((p, c))
+        )
+        args = main.parse_args(["--elevate", "--parent-sid", "S-1-5-21-PARENT"])
+        assert main._verify_elevated_context(args) is False
+        assert warned == [("S-1-5-21-PARENT", "S-1-5-21-CHILD")]
+
+    def test_verify_skips_when_sid_undetermined(self, monkeypatch):
+        """SID процесса определить не удалось — не блокируем запуск."""
+        _patch_main(monkeypatch, frozen=False)
+        import main
+
+        monkeypatch.setattr(main, "_current_user_sid", lambda: "")
+        args = main.parse_args(["--elevate", "--parent-sid", "S-1-5-21-PARENT"])
+        assert main._verify_elevated_context(args) is True
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

@@ -9,6 +9,8 @@ test_applog.py — Регрессия P0-3: NameError в setup_logging.
 
 import contextlib
 import logging
+import sys
+from pathlib import Path
 
 import pytest
 
@@ -20,6 +22,101 @@ class _BrokenHandler(logging.Handler):
 
     def close(self) -> None:
         raise RuntimeError("close failed (регрессия P0-3)")
+
+
+class TestResourcePath:
+    """FIX-20: ресурсы рантайма ищутся через один хелпер.
+
+    Приёмка: все 9 `.ps1` и все файлы локалей находятся И в dev-режиме,
+    И при эмуляции собранного .exe (`sys.frozen` + `sys._MEIPASS`).
+    Без второй проверки смена способа сборки или перенос файлов в подпакет
+    ломали бы пути молча.
+    """
+
+    PS1_COUNT = 9
+
+    @staticmethod
+    def _as_frozen(monkeypatch, tmp_path: Path) -> Path:
+        """Эмулировать PyInstaller: данные распакованы в sys._MEIPASS."""
+        monkeypatch.setattr(sys, "frozen", True, raising=False)
+        monkeypatch.setattr(sys, "_MEIPASS", str(tmp_path), raising=False)
+        return tmp_path
+
+    def test_dev_mode_scripts_exist(self) -> None:
+        scripts = applog.resource_path("scripts")
+        found = list(scripts.glob("*.ps1"))
+        assert len(found) == self.PS1_COUNT, found
+        # Конкретные файлы, которые вызывает cleaner, — не «вообще какие-то».
+        for name in (
+            "layout_cleaner_cleanup.ps1",
+            "layout_cleaner_restore.ps1",
+            "layout_cleaner_backup.ps1",
+            "layout_cleaner_reg_import.ps1",
+            "layout_cleaner_stop_ctfmon.ps1",
+            "layout_cleaner_start_ctfmon.ps1",
+        ):
+            assert (scripts / name).is_file(), name
+
+    def test_dev_mode_locales_exist(self) -> None:
+        locales = applog.resource_path("locales")
+        for name in ("en", "ru", "de", "es", "pt", "zh"):
+            assert (locales / f"{name}.json").is_file(), name
+
+    def test_frozen_mode_uses_meipass(self, monkeypatch, tmp_path: Path) -> None:
+        meipass = self._as_frozen(monkeypatch, tmp_path)
+        (meipass / "scripts").mkdir()
+        (meipass / "locales").mkdir()
+        assert applog.resource_path("scripts") == meipass / "scripts"
+        assert applog.resource_path("locales") == meipass / "locales"
+
+    def test_frozen_mode_falls_back_to_exe_dir(self, monkeypatch, tmp_path) -> None:
+        """Без sys._MEIPASS (не PyInstaller) — каталог исполняемого файла."""
+        monkeypatch.setattr(sys, "frozen", True, raising=False)
+        monkeypatch.delattr(sys, "_MEIPASS", raising=False)
+        monkeypatch.setattr(sys, "executable", str(tmp_path / "app.exe"))
+        assert applog.resource_path("scripts") == tmp_path / "scripts"
+
+    def test_modules_use_the_helper(self) -> None:
+        """cleaner/i18n обязаны брать пути через applog.resource_path.
+
+        Проверяем значением, а не поиском по исходнику: если кто-то вернёт
+        ``Path(__file__).parent``, тест упадёт на неправильном пути.
+        """
+        import cleaner
+        import i18n
+
+        assert applog.resource_path("scripts") == cleaner._PS_DIR
+        assert applog.resource_path("locales") == i18n.LOCALES_DIR
+        # Реальные каталоги (dev-режим) — ресурсы лежат на диске.
+        assert cleaner._PS_DIR.is_dir()
+        assert i18n.LOCALES_DIR.is_dir()
+
+    def test_no_module_builds_resource_path_manually(self) -> None:
+        """Ни один модуль не строит путь к данным через __file__ вручную.
+
+        Это и есть суть FIX-20: единственный источник истины вместо
+        копипасты ``Path(__file__).parent`` по модулям.
+
+        Комментарии пропускаются: в них умышленно описано, как выглядел
+        старый (неверный) вариант. Без этого фильтра тест ловил бы сам
+        себя — ровно тот дефект проверки, из-за которого мок в тестах
+        маскировал FIX-24.
+        """
+        import cleaner
+        import i18n
+
+        offenders: list[str] = []
+        for module in (cleaner, i18n):
+            source = Path(module.__file__).read_text(encoding="utf-8")
+            for line in source.splitlines():
+                stripped = line.strip()
+                if stripped.startswith("#"):
+                    continue
+                if "__file__" in stripped and (
+                    "scripts" in stripped or "locales" in stripped
+                ):
+                    offenders.append(f"{module.__name__}: {stripped}")
+        assert not offenders, offenders
 
 
 def _restore_handlers(log: logging.Logger, saved: list[logging.Handler]) -> None:

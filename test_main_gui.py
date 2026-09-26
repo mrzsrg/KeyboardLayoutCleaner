@@ -487,6 +487,73 @@ class TestRunAsAdmin:
         mock_shell.assert_called()
         assert mock_shell.call_args[0][0] == "runas"
 
+    def test_sandbox_flag_uses_live_state_not_import_snapshot(
+        self, monkeypatch
+    ):
+        """FIX-30: повышение прав НЕ теряет песочницу.
+
+        Дефект найден на живой машине: приложение, запущенное с
+        ``--sandbox``, после повышения прав стартовало уже без него
+        (в журнале ``params= --elevate --parent-sid ...``), и удаление
+        раскладки шло по-настоящему.
+
+        Причина: глобальная ``main.SANDBOX_MODE`` — снимок, снятый при
+        импорте модуля ДО разбора командной строки, поэтому флаг
+        ``--sandbox`` в неё не попадал. Читать надо живое состояние.
+        """
+        import config
+
+        main_mod, app = _make_app(monkeypatch)
+        captured: list[str] = []
+
+        def _capture(operation, target, parameters, directory, show_cmd):
+            captured.append(parameters)
+            return 42, 0
+
+        monkeypatch.setattr(main_mod.winapi, "shell_execute", _capture)
+        monkeypatch.setattr(main_mod, "_current_user_sid", lambda: "")
+        # Снимок при импорте — False, как и при реальном запуске с
+        # --sandbox: именно это состояние и ломало передачу флага.
+        monkeypatch.setattr(main_mod, "SANDBOX_MODE", False, raising=False)
+
+        with (
+            mock.patch.object(main_mod.sys, "exit"),
+            mock.patch.object(main_mod.threading, "Thread"),
+        ):
+            config.enable_sandbox()
+            try:
+                app._restart_as_admin()
+            finally:
+                config.disable_sandbox()
+
+        assert captured, "ShellExecuteW не вызван"
+        assert "--sandbox" in captured[0], (
+            f"песочница потеряна при повышении прав: {captured[0]!r}"
+        )
+
+    def test_no_sandbox_flag_when_sandbox_is_off(self, monkeypatch):
+        """Обратный случай: без песочницы флаг не добавляется."""
+        import config
+
+        main_mod, app = _make_app(monkeypatch)
+        captured: list[str] = []
+        monkeypatch.setattr(
+            main_mod.winapi,
+            "shell_execute",
+            lambda *a: (captured.append(a[2]) or (42, 0)),
+        )
+        monkeypatch.setattr(main_mod, "_current_user_sid", lambda: "")
+        with (
+            mock.patch.object(main_mod.sys, "exit"),
+            mock.patch.object(main_mod.threading, "Thread"),
+        ):
+            config.disable_sandbox()
+            app._restart_as_admin()
+        assert captured, "ShellExecuteW не вызван"
+        assert (
+            "--sandbox" not in captured[0]
+        ), f"флаг добавлен без песочницы: {captured[0]!r}"
+
 
 # ---------------------------------------------------------------------------
 # TestConstants

@@ -66,6 +66,7 @@ from config import (  # noqa: E402 — импорты ниже _parse_sandbox_mo
     TIMEOUTS,
     disable_sandbox,
     enable_sandbox,
+    is_sandbox_enabled,
 )
 from config import (  # noqa: E402
     __version__ as app_version,
@@ -2111,8 +2112,18 @@ class KeyboardLayoutCleaner(ctk.CTk):
         try:
             # Определяем параметры для elevated процесса
             # ВАЖНО: передаём --sandbox если включён, чтобы новый процесс
-            # тоже работал в песочнице
-            sandbox_flag = " --sandbox" if SANDBOX_MODE else ""
+            # тоже работал в песочнице.
+            #
+            # FIX-30: читать нужно ЖИВОЕ состояние (config.is_sandbox_enabled),
+            # а не снимок SANDBOX_MODE, снятый при импорте модуля. Флаг
+            # --sandbox в командной строке активирует песочницу через
+            # activate_sandbox(), но в глобальную переменную не попадает —
+            # она вычислена до разбора аргументов. В итоге пользователь,
+            # запустивший exe с --sandbox «чтобы не трогать систему»,
+            # после повышения прав получал процесс БЕЗ песочницы и удалял
+            # раскладки по-настоящему. Замечено на живой машине: в журнале
+            # `params= --elevate --parent-sid ...` без --sandbox.
+            sandbox_flag = " --sandbox" if is_sandbox_enabled() else ""
             # FIX-14: передаём SID родителя — elevated-процесс сверит его
             # со своим SID и откажется работать, если UAC выполнил
             # повышение под учётной записью другого администратора.

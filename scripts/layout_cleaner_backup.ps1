@@ -10,6 +10,11 @@
 # режим) JSON выводится в stdout.
 # ВАЖНО: ConvertTo-Json через pipe разворачивает одиночный элемент в голый
 # объект. Поэтому используется -InputObject: он сохраняет массив всегда.
+# ВАЖНО (FIX-25): результат этого скрипта — вход для restore.ps1, который
+# применяет Set-WinUserLanguageList. Снимок обязан содержать по ОДНОМУ
+# объекту на язык со СКАЛЯРНЫМ LanguageTag; иначе restore склеит теги в
+# несуществующий тег и заменит список языков целиком. Форма закреплена
+# round-trip-тестом test_langlist_roundtrip.py.
 
 param(
     [string]$OutputPath
@@ -23,13 +28,46 @@ $ErrorActionPreference = 'Stop'
 # [Console]::OutputEncoding может бросить IOException.
 try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch { }
 
-# @(...) гарантирует, что $langs — массив, даже если язык один или ноль
-$langs = @(Get-WinUserLanguageList)
+# FIX-25: Get-WinUserLanguageList возвращает СПИСОК List<WinUserLanguage>
+# как ОДИН объект, а не поток языков. Прежний код делал
+#     $langs = @(Get-WinUserLanguageList)
+# и получал массив ИЗ ОДНОГО элемента — самого списка. Тогда
+# `$langs | ForEach-Object` выполнял ОДНУ итерацию, в которой
+# $_.LanguageTag отдавал ВСЕ теги сразу, а $_.InputMethodTips — все
+# раскладки всех языков. Снимок получался из одной записи вида
+#     {"LanguageTag":["ru","en-US"],
+#      "InputMethodTips":["0419:00000419","0409:00000409"]}
+# restore.ps1 склеивал такой тег в строку "ru en-US", New-WinUserLanguageList
+# создавал ОДИН язык с НЕСУЩЕСТВУЮЩИМ тегом, и Set-WinUserLanguageList
+# -Force ЗАМЕНЯЛ весь список языков пользователя — с рапортом SUCCESS.
+# Коллекцию разворачиваем явно (как в layout_cleaner_cleanup.ps1, FIX-24).
+try {
+    $langs = @()
+    foreach ($item in (Get-WinUserLanguageList)) { $langs += $item }
+} catch {
+    Write-Output "FAILED: Get-WinUserLanguageList"
+    exit 1
+}
 
+# FIX-3: снимаем ПОЛНЫЙ изменяемый набор WinUserLanguage. Handwriting/
+# Spellchecking New-WinUserLanguageList сбрасывает в дефолт, поэтому без
+# них откат возвращал бы язык с чужими настройками письма. Чтение — через
+# PSObject.Properties: на части сборок Windows свойства могут отсутствовать
+# (тогда в снимке останется null, restore пропустит присвоение).
 $out = @($langs | ForEach-Object {
+    $hw = $null
+    $sc = $null
+    try {
+        if ($_.PSObject.Properties['Handwriting']) { $hw = [bool]$_.Handwriting }
+    } catch { }
+    try {
+        if ($_.PSObject.Properties['Spellchecking']) { $sc = [bool]$_.Spellchecking }
+    } catch { }
     @{
         LanguageTag = $_.LanguageTag
         InputMethodTips = @($_.InputMethodTips)
+        Handwriting = $hw
+        Spellchecking = $sc
     }
 })
 

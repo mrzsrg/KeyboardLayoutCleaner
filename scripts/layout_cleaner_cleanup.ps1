@@ -3,8 +3,9 @@
 #
 # PowerShell-скрипт для очистки фантомной раскладки из списка языков.
 # Запускается из cleaner.py через subprocess.run с параметрами:
-#   -layout_klid <8-символьный HEX KLID>
-#   [-apply]  # если нет — только dry-run (план изменений)
+#   -LayoutKlid <8-символьный HEX KLID>
+#   [-CjkMapJson <путь к JSON-файлу с картой CJK>]  # см. ниже
+#   [-Apply]  # если нет — только dry-run (план изменений)
 #
 # Вывод (в stdout):
 #   DROP|<tag>|<tip> — раскладка будет удалена из языка
@@ -18,7 +19,18 @@ param(
     [Parameter(Mandatory=$true)]
     [string]$LayoutKlid,
 
-    [switch]$Apply
+    # FIX-8: CJK-карта LanguageTag -> KLID приходит из Python
+    # (layout_ids.cjk_map_json()), а не хранится копией в этом файле:
+    # расхождение копий означало бы «сканер видит CJK-раскладку, очистка — нет».
+    [string]$CjkMapJson,
+
+    [switch]$Apply,
+
+    # FIX-25: песочница. Реестр изолирован, но Set-WinUserLanguageList —
+    # WinRT-API, минующий реестр, и песочницей НЕ изолируется. Флаг
+    # запрещает вызов: в песочнице скрипт доводит план до конца и
+    # возвращает SANDBOX_SKIPPED, не меняя реальный список языков.
+    [switch]$Sandbox
 )
 
 $ErrorActionPreference = 'Stop'
@@ -35,17 +47,34 @@ if ($LayoutKlid -notmatch '^[0-9a-fA-F]{8}$') {
     exit 1
 }
 
-# CJK-раскладки: InputMethodTips хранят GUID вместо KLID,
-# маппинг LanguageTag → KLID (совпадает с scanner.py LAYOUT_MAP).
-$cjk = @{
-    'zh-CN' = '00000804'
-    'zh-TW' = '00000404'
-    'ja-JP' = '00000411'
-    'ko-KR' = '00000412'
+# CJK-раскладки: InputMethodTips хранят GUID вместо KLID, поэтому нужен
+# маппинг LanguageTag -> KLID. Источник — layout_ids.CJK_KLIDS (Python).
+$cjk = @{}
+if ($CjkMapJson) {
+    try {
+        $loaded = Get-Content -LiteralPath $CjkMapJson -Raw -Encoding UTF8 | ConvertFrom-Json
+        foreach ($prop in $loaded.PSObject.Properties) {
+            $cjk[$prop.Name] = [string]$prop.Value
+        }
+    } catch {
+        Write-Output "INVALID_CJK_MAP: $CjkMapJson"
+        exit 1
+    }
 }
 
 try {
-    $langs = @(Get-WinUserLanguageList)
+    # Get-WinUserLanguageList возвращает СПИСОК List<WinUserLanguage> как
+    # ОДИН объект, а не поток языков. Прежний код делал
+    #     $langs = @(Get-WinUserLanguageList)
+    # и получал массив ИЗ ОДНОГО элемента — самого списка. Тогда
+    # `foreach ($l in $langs)` выполнял одну итерацию, в которой $l был
+    # списком, а не языком: $l.LanguageTag склеивал все теги ("ru en-US"),
+    # а $l.InputMethodTips — все раскладки сразу. Любая правка такого
+    # $l заканчивалась MethodInvocationException, и скрипт падал, ничего
+    # не применяя. foreach по коллекции разворачивает её сам, поэтому
+    # элементы собираем явно.
+    $langs = @()
+    foreach ($item in (Get-WinUserLanguageList)) { $langs += $item }
 } catch {
     Write-Output "FAILED: Get-WinUserLanguageList"
     exit 0
@@ -81,10 +110,17 @@ foreach ($l in $langs) {
 
     if ($dropTips.Count -gt 0) {
         $changed = $true
-        foreach ($tip in $dropTips) {
-            [void]$l.InputMethodTips.Remove($tip)
+        # Свойство InputMethodTips у WinUserLanguage ТОЛЬКО ДЛЯ ЧТЕНИЯ
+        # (присваивание даёт RuntimeException), но сам список мутабелен.
+        # Поэтому свойство не присваиваем, а очищаем и заполняем заново —
+        # так работает и List<string>, и обычный массив.
+        $keptTips = @()
+        foreach ($t in $tips) {
+            if ($dropTips -notcontains $t) { $keptTips += $t }
         }
-        if (@($l.InputMethodTips).Count -eq 0) {
+        $l.InputMethodTips.Clear()
+        foreach ($t in $keptTips) { [void]$l.InputMethodTips.Add($t) }
+        if ($keptTips.Count -eq 0) {
             $report.Add('REMOVELANG|' + $tag)
         } else {
             $kept.Add($l)
@@ -110,6 +146,14 @@ if ($kept.Count -eq 0) {
 
 if (-not $Apply) {
     Write-Output 'DRYRUN'
+    exit 0
+}
+
+# FIX-25: последний рубеж перед Set-WinUserLanguageList. Все проверки выше
+# читали только реестр, который песочница изолирует; сам Set — WinRT-API,
+# и в песочнице он бьёт по РЕАЛЬНОМУ списку языков пользователя.
+if ($Sandbox) {
+    Write-Output 'SANDBOX_SKIPPED'
     exit 0
 }
 

@@ -8,6 +8,23 @@
 #
 # Вывод (в stdout):
 #   SUCCESS — успешно переустановлен
+#   SANDBOX_SKIPPED — песочница: Set-WinUserLanguageList не вызывался
+#
+# FIX-25: -Sandbox. Песочница изолирует РЕЕСТР, но Set-WinUserLanguageList —
+# WinRT-API, минующий реестр, и песочницей НЕ изолируется. Без флага
+# запуск из песочницы переустановил бы РЕАЛЬНЫЙ список языков.
+
+param(
+    [switch]$Sandbox
+)
+
+$ErrorActionPreference = 'Stop'
+
+# FIX-25: запрет на вызов — до любых обращений к WinRT.
+if ($Sandbox) {
+    Write-Output "SANDBOX_SKIPPED"
+    exit 0
+}
 
 $ErrorActionPreference = 'Stop'
 

@@ -758,6 +758,18 @@ class TestScanCleanParity:
         capabilities.grant(capabilities.Capability.REGISTRY_MUTATE,
             capabilities.Capability.LANGUAGE_LIST)
 
+    @pytest.fixture(autouse=True)
+    def _no_admin_by_default(self, monkeypatch):
+        """Права администратора не должны зависеть от того, под кем запущен pytest.
+
+        На сервере GitHub тесты идут от администратора, локально — обычно нет.
+        При ``is_admin() == True`` в плане появляется ветка ``HKU\\.DEFAULT``,
+        и ``_plan_hits(BR_PRELOAD)`` начинает видеть два значения «1» вместо
+        одного — тест падал на CI и проходил локально по одной причине.
+        Тесты, которым права нужны, ставят подмену сами.
+        """
+        monkeypatch.setattr(cleaner, "is_admin", lambda: False)
+
 
     BR_PRELOAD = "Keyboard Layout\\Preload"
     BR_SUBST = "Keyboard Layout\\Substitutes"

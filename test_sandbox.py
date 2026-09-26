@@ -699,13 +699,23 @@ class TestSwitcherConsistency:
     """
 
     @staticmethod
-    def _patch(monkeypatch, list_klids, preload_klids, ctf_names):
+    def _patch(monkeypatch, list_klids, preload_klids, ctf_names, switcher_klids):
         monkeypatch.setattr(
             scanner,
             "_get_language_list_from_powershell",
             lambda: [
                 {"LanguageTag": "xx", "KeyboardLayoutId": k} for k in list_klids
             ],
+        )
+        # FIX-31: подменяем и СЕССИОННЫЙ источник. Раньше он оставался живым:
+        # тест читал настоящую панель переключения той машины, на которой его
+        # запустили, и «согласованная система» выглядела согласованной только
+        # потому, что у автора в сессии были и ru, и en-US. На сервере GitHub
+        # сессия одна (en-US), и два теста падали с ложным расхождением.
+        # Модульная привязка (scanner._get_switcher_klids) — как и остальные
+        # подмены здесь: подмена winapi ниже уровня не действовала бы.
+        monkeypatch.setattr(
+            scanner, "_get_switcher_klids", lambda: set(switcher_klids)
         )
         monkeypatch.setattr(
             scanner,
@@ -743,6 +753,7 @@ class TestSwitcherConsistency:
             list_klids=["00000419", "00000409"],
             preload_klids=["00000419", "00000409"],
             ctf_names=["0x00000419", "0x00000409"],
+            switcher_klids={"00000419", "00000409"},
         )
         report = scanner.check_switcher_consistency()
         assert report["tips_without_preload"] == []
@@ -757,6 +768,7 @@ class TestSwitcherConsistency:
             list_klids=["00000419", "00000409"],
             preload_klids=["00000419"],
             ctf_names=["0x00000419"],
+            switcher_klids={"00000419", "00000409"},
         )
         report = scanner.check_switcher_consistency()
         assert report["tips_without_preload"] == ["00000409"]
@@ -769,6 +781,7 @@ class TestSwitcherConsistency:
             list_klids=["00000419"],
             preload_klids=["00000419", "d001dead"],
             ctf_names=["0x00000419"],
+            switcher_klids={"00000419"},
         )
         report = scanner.check_switcher_consistency()
         assert report["preload_without_tip"] == ["d001dead"]
@@ -785,6 +798,7 @@ class TestSwitcherConsistency:
             list_klids=["00000419", "00000409"],
             preload_klids=["00000419", "00000409"],
             ctf_names=["0x00000419"],
+            switcher_klids={"00000419", "00000409"},
         )
         report = scanner.check_switcher_consistency()
         # FIX-27: полный KLID, а не «голый» LANGID «0409» — значение уходит
@@ -801,6 +815,7 @@ class TestSwitcherConsistency:
             list_klids=["00000419", "00000409"],
             preload_klids=["00000419", "00000409"],
             ctf_names=["0x00000419"],
+            switcher_klids={"00000419", "00000409"},
         )
         report = scanner.check_switcher_consistency()
         for field, values in report.items():
@@ -813,9 +828,29 @@ class TestSwitcherConsistency:
             list_klids=["00000419"],
             preload_klids=["00000419"],
             ctf_names=["0x00000419", "junk", "0xZZZZ"],
+            switcher_klids={"00000419"},
         )
         report = scanner.check_switcher_consistency()
         assert report["ctf_missing"] == []
+
+    def test_session_layout_absent_from_switcher(self, monkeypatch):
+        """FIX-31: панель не показывает раскладку, хотя реестр её объявляет.
+
+        Сессионный источник — единственный, который читается не из реестра,
+        поэтому подменять его нужно отдельно. Останься он живым, тест
+        повторял бы состояние машины автора вместо проверяемого случая.
+        """
+        self._patch(
+            monkeypatch,
+            list_klids=["00000419"],
+            preload_klids=["00000419"],
+            ctf_names=["0x00000419"],
+            switcher_klids={"00000409"},
+        )
+        report = scanner.check_switcher_consistency()
+        assert report["switcher_missing"] == ["00000419"]
+        assert report["switcher_stale"] == ["00000409"]
+        assert scanner.is_switcher_consistent(report) is False
 
     def test_empty_and_missing_reports_are_consistent(self):
         assert scanner.is_switcher_consistent(None) is True

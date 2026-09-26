@@ -55,6 +55,13 @@ SAFETY_NET_*/
 *.tar.gz
 *.tar.bz2
 
+# === Артефакты публикации релиза (FIX-33) ===
+# SHA256SUMS.txt и промежуточная таблица создаются скриптом
+# release_hashes.py при выпуске релиза; в истории им не место.
+SHA256SUMS.txt
+release-table.md
+release-notes.md
+
 # === IDE ===
 .vscode/
 .idea/

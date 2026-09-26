@@ -60,6 +60,22 @@ Compress-Archive -Path dist\KeyboardLayoutCleaner -DestinationPath KeyboardLayou
 Get-FileHash KeyboardLayoutCleaner-portable.zip -Algorithm SHA256
 ```
 
+> **Хеши публикуются автоматически (FIX-33).** При публикации релиза workflow
+> `build-release` считает SHA256 архива и EXE внутри него и подставляет их в
+> README и в описание релиза — руками ничего править не нужно. Скрипт
+> `scripts/release_hashes.py` можно запустить и вручную:
+>
+> ```powershell
+> python scripts/release_hashes.py compute --archive KeyboardLayoutCleaner-portable.zip --tag v1.1.0
+> python scripts/release_hashes.py readme  --archive KeyboardLayoutCleaner-portable.zip --tag v1.1.0
+> ```
+>
+> Блок в README находится между маркерами `<!-- klc:hashes:begin -->` и
+> `<!-- klc:hashes:end -->`: всё внутри них перезаписывается, всё снаружи —
+> нет. **Маркеры удалять нельзя** (без них скрипт допишет таблицу в конец
+> файла; за это отвечает тест `test_readme_still_has_markers`). Рядом с
+> архивом workflow кладёт `SHA256SUMS.txt` — его понимает `sha256sum -c`.
+
 В релизе укажите коммит исходников, результаты проверок и SHA256 архива.
 Не включайте пользовательские логи, настройки и бэкапы реестра.
 Неподписанный EXE может вызывать предупреждение SmartScreen; цифровая подпись

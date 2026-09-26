@@ -179,8 +179,54 @@ jobs:
       - name: Create ZIP archive
         run: |
           $tag = "${{ github.event.release.tag_name }}".TrimStart("v")
-          Compress-Archive -Path "dist\KeyboardLayoutCleaner\*" -DestinationPath "KeyboardLayoutCleaner_$tag.zip"
+          $zip = "KeyboardLayoutCleaner-$tag-portable.zip"
+          # С папкой, а не её содержимым: так же, как в BUILD.md и в v1.1.0 —
+          # распаковка даёт каталог KeyboardLayoutCleaner\, и именно такой
+          # путь до EXE описан в README (для онлайн-проверки и для хеша).
+          Compress-Archive -Path "dist\KeyboardLayoutCleaner" -DestinationPath $zip
+          "ARCHIVE=$zip" | Out-File -FilePath $env:GITHUB_ENV -Append
+      - name: "Checksums: compute"
+        # Считаем здесь, на checkout'е тега, и кладём таблицу во временную
+        # папку: README правится в ветке по умолчанию, а скрипт после смены
+        # ветки мог бы отсутствовать (см. шаг ниже).
+        run: >
+          python scripts/release_hashes.py compute
+          --archive "$env:ARCHIVE"
+          --tag "${{ github.event.release.tag_name }}"
+          --out "$env:RUNNER_TEMP\release-table.md"
+      - name: "Checksums: publish to release notes"
+        # Идёт ДО загрузки файлов: если упадёт, релиз уже собран, а
+        # недописанные хеши — это дефект, который надо увидеть сразу.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >
+          python scripts/release_hashes.py notes
+          --tag "${{ github.event.release.tag_name }}"
+          --table "$env:RUNNER_TEMP\release-table.md"
+          --notes-file "$env:RUNNER_TEMP\notes.md"
       - name: Upload release asset
         uses: softprops/action-gh-release@v2
         with:
-          files: KeyboardLayoutCleaner_*.zip
+          files: |
+            KeyboardLayoutCleaner-*-portable.zip
+            SHA256SUMS.txt
+      - name: Publish checksums to README
+        run: |
+          # Ветка по умолчанию, а не тег: checkout на событии release смотрит
+          # на ТЕГ, и коммит в теге — это либо отказ, либо новый тег.
+          git fetch --depth=1 origin "${{ github.event.repository.default_branch }}"
+          git checkout -B "${{ github.event.repository.default_branch }}" FETCH_HEAD
+          if (-not (Test-Path "scripts\release_hashes.py")) {
+            # Релиз поставили с тега, который ещё не влит в ветку по
+            # умолчанию: забираем сам скрипт из тега, автоатика не теряется.
+            git checkout "${{ github.event.release.tag_name }}" -- scripts/release_hashes.py
+          }
+          python scripts/release_hashes.py readme --tag "${{ github.event.release.tag_name }}" --table "$env:RUNNER_TEMP\release-table.md"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add README.md
+          git diff --staged --quiet
+          if ($LASTEXITCODE -ne 0) {
+            git commit -m "docs: SHA256 релиза $env:ARCHIVE обновлён автоматически"
+            git push
+          }

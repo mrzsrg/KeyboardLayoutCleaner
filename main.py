@@ -17,13 +17,16 @@ GUI на CustomTkinter. Реализует воркфлоу из ARCHITECTURE.md
 """
 
 import argparse
+import atexit
 import ctypes
 import logging
 import os
 import queue
 import re
+import signal
 import sys
 import threading
+from ctypes import wintypes
 from tkinter import messagebox
 from typing import Any, ClassVar
 
@@ -105,6 +108,15 @@ def _parse_sandbox_mode(
         "Применяется только при UAC-elevation для корректной передачи "
         "владения мьютексом от старого процесса.",
     )
+    parser.add_argument(
+        "--parent-sid",
+        action="store",
+        default="",
+        help="SID учётной записи, запросившей повышение прав (FIX-14). "
+        "Elevated-процесс сверяет этот SID со своим: если UAC выполнил "
+        "повышение под другой учётной записью, HKCU процесса — чужой "
+        "профиль, и запуск отменяется до любых операций.",
+    )
     args, _ = parser.parse_known_args(argv)
 
     env_val = os.environ.get("SANDBOX_MODE", "0").strip().lower()
@@ -158,6 +170,146 @@ from mutex import release_mutex as _mutex_release  # noqa: E402
 
 # Алиасы для обратной совместимости с тестами
 _MUTEX_NAME = r"Local\KeyboardLayoutCleaner_{A3F8B2C1-7D4E-4A9B-8C6F-1E2D3F4A5B6C}"
+
+
+# ---------------------------------------------------------------------------
+# FIX-14: защита от elevation под чужой учётной записью
+# ---------------------------------------------------------------------------
+# Константы WinAPI для GetTokenInformation (TOKEN_INFORMATION_CLASS):
+# вынесены на уровень модуля — UPPER_CASE устраивает ruff N806 и соответствует
+# общепринятому соглашению об именовании констант WinAPI.
+_TOKEN_QUERY: int = 0x0008
+_TOKEN_USER: int = 1  # enum TOKEN_INFORMATION_CLASS
+
+
+def _current_user_sid() -> str:
+    """
+    SID учётной записи, от имени которой выполняется процесс ("S-1-5-21-...").
+
+    ctypes + OpenProcessToken(TokenUser): у процесса нет pywin32, а
+    os.getlogin()/getpass дают имя, а не SID. Пустая строка означает
+    «определить не удалось» — вызывающий код тогда ведёт себя как раньше
+    (проверка пропускается, решение фиксируется в логе).
+    """
+    advapi32 = ctypes.windll.advapi32
+    kernel32 = ctypes.windll.kernel32
+    kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+    advapi32.OpenProcessToken.argtypes = (
+        wintypes.HANDLE,
+        wintypes.DWORD,
+        ctypes.POINTER(wintypes.HANDLE),
+    )
+    advapi32.OpenProcessToken.restype = wintypes.BOOL
+    advapi32.GetTokenInformation.argtypes = (
+        wintypes.HANDLE,
+        wintypes.DWORD,
+        ctypes.c_void_p,
+        wintypes.DWORD,
+        ctypes.POINTER(wintypes.DWORD),
+    )
+    advapi32.GetTokenInformation.restype = wintypes.BOOL
+    advapi32.ConvertSidToStringSidW.argtypes = (
+        ctypes.c_void_p,
+        ctypes.POINTER(wintypes.LPWSTR),
+    )
+    advapi32.ConvertSidToStringSidW.restype = wintypes.BOOL
+    kernel32.LocalFree.argtypes = (wintypes.HANDLE,)
+    kernel32.LocalFree.restype = wintypes.HANDLE
+    kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
+    kernel32.CloseHandle.restype = wintypes.BOOL
+
+    token = wintypes.HANDLE()
+    if not advapi32.OpenProcessToken(
+        kernel32.GetCurrentProcess(), _TOKEN_QUERY, ctypes.byref(token)
+    ):
+        return ""
+    try:
+        needed = wintypes.DWORD(0)
+        # Первый вызов — только размер структуры (ожидаемо вернёт FALSE).
+        advapi32.GetTokenInformation(token, _TOKEN_USER, None, 0, ctypes.byref(needed))
+        if needed.value == 0:
+            return ""
+        buf = ctypes.create_string_buffer(needed.value)
+        if not advapi32.GetTokenInformation(
+            token, _TOKEN_USER, buf, needed.value, ctypes.byref(needed)
+        ):
+            return ""
+        # TOKEN_USER = { SID_AND_ATTRIBUTES { PSID; DWORD } } — PSID в начале.
+        sid_ptr = ctypes.cast(buf, ctypes.POINTER(ctypes.c_void_p)).contents.value
+        if not sid_ptr:
+            return ""
+        sid_str = wintypes.LPWSTR()
+        if not advapi32.ConvertSidToStringSidW(
+            ctypes.c_void_p(sid_ptr), ctypes.byref(sid_str)
+        ):
+            return ""
+        try:
+            return sid_str.value or ""
+        finally:
+            kernel32.LocalFree(sid_str)
+    finally:
+        kernel32.CloseHandle(token)
+
+
+def _warn_foreign_profile(parent_sid: str, current_sid: str) -> None:
+    """Предупредить пользователя: elevation переключила профиль, запуск отменён.
+
+    ctypes MessageBoxW, а не tkinter: на момент проверки окно ещё не
+    создано (проверка выполняется до мьютекса и UI).
+    """
+    title = "Keyboard Layout Cleaner"
+    text = (
+        "Права администратора получены под ДРУГОЙ учётной записью.\n\n"
+        f"Запуск от вашего имени: {parent_sid}\n"
+        f"Повышенный процесс: {current_sid}\n\n"
+        "Операция отменена: иначе изменения (очистка раскладок, бэкапы, "
+        "лог) применялись бы к профилю другого пользователя.\n\n"
+        "Запустите приложение без повышения прав — очистка работает в "
+        "вашем профиле; администратор нужен только для ветки HKU\\.DEFAULT."
+    )
+    logger.warning(
+        "Отмена запуска: elevation под другой учётной записью "
+        "(родитель=%s, процесс=%s)",
+        parent_sid,
+        current_sid,
+    )
+    # FIX-19: MessageBoxW с объявленным прототипом, через winapi.
+    winapi.message_box(text, title, 0x30)  # MB_ICONWARNING
+
+
+def _verify_elevated_context(args: argparse.Namespace) -> bool:
+    """
+    FIX-14: elevated-процесс должен работать в профиле запросившего.
+
+    Сравнивает SID процесса с ``--parent-sid``. True — продолжать запуск;
+    False — показать предупреждение и НЕ выполнять никаких операций в
+    чужом HKCU. Проверка выполняется только в цепочке elevation
+    (``--elevate`` + непустой ``--parent-sid``).
+
+    ``args.elevate`` проверяется через ``is True``: argparse ``store_true``
+    даёт булево ``True``, тогда проверка активна только для настоящего
+    повышенного процесса — а не для тестовых моков, где атрибуты являются
+    truthy-объектами MagicMock.
+    """
+    if (
+        args.elevate is not True
+        or not isinstance(args.parent_sid, str)
+        or not args.parent_sid
+    ):
+        return True
+    current = _current_user_sid()
+    if not current:
+        # Не смогли определить SID процесса — блокировать нечем; фиксируем
+        # пропуск проверки в логе и продолжаем как раньше.
+        logger.warning(
+            "Проверка --parent-sid пропущена: SID процесса не определён (родитель=%s)",
+            args.parent_sid,
+        )
+        return True
+    if current == args.parent_sid:
+        return True
+    _warn_foreign_profile(args.parent_sid, current)
+    return False
 
 
 def _acquire_mutex(is_elevate: bool = False):
@@ -231,11 +383,13 @@ if not is_ok:
 # должен быть вычислен (_parse_sandbox_mode выше) до импорта scanner/cleaner.
 import customtkinter as ctk  # type: ignore[import-untyped]  # noqa: E402
 
+import winapi  # noqa: E402
 from applog import get_app_dir, get_logger  # noqa: E402
 from cleaner import (  # noqa: E402
     delete_layout,
     disable_language_sync,
     enable_language_sync,
+    ensure_input_services_running,
     get_backup_dir,
     is_admin,
     is_language_sync_blocked,
@@ -404,6 +558,14 @@ class KeyboardLayoutCleaner(ctk.CTk):
         self._stage: str = "start"
         self._pulse_job: str | None = None
         self._pulse_state: dict[str, Any] | None = None
+
+        # FIX-13: пока идёт удаление/восстановление, окно закрывать нельзя —
+        # daemon-поток будет убит, __exit__ CtfmonSuspender не выполнится и
+        # ctfmon/TextInputHost останутся остановленными.
+        self._operation_in_progress = False
+
+        # FIX-13: крестик во время операции — предупреждение вместо закрытия.
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
 
         # Потокобезопасная доставка результатов фоновых потоков в UI:
         # вызывать tkinter из другого потока нельзя (блокируется/падает)
@@ -1352,6 +1514,8 @@ class KeyboardLayoutCleaner(ctk.CTk):
             return
 
         klid = plan["klid"]
+        # FIX-13: операция пошла — запрещаем закрытие окна до завершения.
+        self._operation_in_progress = True
         if self.delete_button:
             self.delete_button.configure(state="disabled", text=_t("btn_delete_busy"))
         if self.restore_button:
@@ -1362,7 +1526,9 @@ class KeyboardLayoutCleaner(ctk.CTk):
 
         def _delete_thread() -> None:
             try:
-                report = delete_layout(klid)
+                report = delete_layout(
+                    klid, block_cloud_sync=self.block_sync_checkbox.get()
+                )
                 self._post(self._after_delete, report)
             except Exception as exc:  # noqa: BLE001
                 self._post(self._after_delete_error, str(exc))
@@ -1429,6 +1595,8 @@ class KeyboardLayoutCleaner(ctk.CTk):
 
     def _after_delete(self, report: dict[str, Any]) -> None:
         """Обработка результата удаления."""
+        # FIX-13: операция завершена — снова разрешаем закрытие окна.
+        self._operation_in_progress = False
         self._progress_stop()
         if self.delete_button:
             self.delete_button.configure(text=_t("btn_delete"), state="normal")
@@ -1474,12 +1642,11 @@ class KeyboardLayoutCleaner(ctk.CTk):
             msg = self._build_success_message(report, total_deleted)
             self._set_status(_t("status_deleted_count", count=total_deleted))
             logger.info(
-                "Удаление %s: записей=%d, sync=%s, cloud_block=%s, welcome=%s",
+                "Удаление %s: записей=%d, sync=%s, cloud_block=%s",
                 report.get("klid", "?"),
                 total_deleted,
                 report.get("power_sync_detail", ""),
                 report.get("language_sync_block_detail", ""),
-                report.get("welcome_screen_sync_detail", ""),
             )
         else:
             msg = self._build_failure_message(report, sync_detail)
@@ -1503,13 +1670,10 @@ class KeyboardLayoutCleaner(ctk.CTk):
     def _build_success_message(self, report: dict[str, Any], total_deleted: int) -> str:
         """Собрать детальное сообщение об удачном удалении для диалога результата."""
         sync_detail = report.get("power_sync_detail", "")
-        # Переменные sync_block_* / welcome_* также используются в _after_delete"""
-        # Переменные sync_block_* / welcome_* также используются в _after_delete
+        # Переменные sync_block_* также используются в _after_delete
         # для логирования — здесь переопределяем локально только для сообщения.
         sync_blocked = report.get("language_sync_blocked", False)
         sync_block_detail = report.get("language_sync_block_detail", "")
-        welcome_synced = report.get("welcome_screen_synced", False)
-        welcome_detail = report.get("welcome_screen_sync_detail", "")
 
         msg = (
             _t("dlg_result_done")
@@ -1524,15 +1688,15 @@ class KeyboardLayoutCleaner(ctk.CTk):
             + _t("dlg_result_cloud_sync")
             + ("✓ " + sync_block_detail if sync_blocked else "✗ " + sync_block_detail)
         )
-        msg += (
-            "\n"
-            + _t("dlg_result_welcome_sync")
-            + ("✓ " + welcome_detail if welcome_synced else "✗ " + welcome_detail)
-        )
 
         partial = report.get("backup_failed_branches", [])
         if partial:
             msg += "\n" + _t("dlg_result_backup_partial", branches=", ".join(partial))
+        msg += self._format_plan_drift(report)
+        # FIX-26: операция успешна, но список языков и панель переключения
+        # разошлись — пользователь увидит «установленный» язык, которого в
+        # переключателе нет. Молчать об этом хуже, чем перезагрузка.
+        msg += self._format_switcher_check(report)
         if report["power_sync"]:
             msg += _t("dlg_advice_logoff")
         else:
@@ -1556,10 +1720,64 @@ class KeyboardLayoutCleaner(ctk.CTk):
         msg = _t("dlg_delete_failed_nosync", detail=sync_detail or "нет данных")
         if report.get("error"):
             msg += "\n\n" + _t("dlg_delete_failed", error=report["error"])
+        # FIX-6: дрейф плана показывается и при сбое — чаще всего он и есть
+        # следствие частичной мутации. Раньше предупреждение терялось именно
+        # в сценарии, ради которого и добавлено.
+        msg += self._format_plan_drift(report)
         return msg  # type: ignore[no-any-return]
+
+    @staticmethod
+    def _format_plan_drift(report: dict[str, Any]) -> str:
+        """Строка предупреждения о дрейфе плана (пустая, если дрейфа нет)."""
+        drift = report.get("plan_drift") or []
+        if not drift:
+            return ""
+        return "\n" + _t(
+            "dlg_result_plan_drift",
+            planned=drift[0],
+            actual=drift[1],
+            remaining="; ".join(drift[2:]),
+        )
+
+    @staticmethod
+    def _format_switcher_check(report: dict[str, Any]) -> str:
+        """FIX-26/27: предупреждение о расхождении со списком языков.
+
+        Пустая строка, если расхождения нет. Иначе — что именно не сошлось
+        и что делать. Раньше эта ситуация была безымянной: операция рапортовала
+        «успех», а раскладка пропадала из переключателя до перезагрузки.
+
+        FIX-27: ``ctf_missing`` больше НЕ проглатывается. Раньше он уходил
+        только в лог, и это была ровно та ситуация, ради которой диагностика
+        и заводилась: на живой системе ветка ``CTF\\Assemblies\\0x00000409``
+        отсутствовала, а пользователю говорилось «успех» — он не понимал,
+        почему английская раскладка не появилась. Теперь это видно и
+        сформулировано как действие, а не как «возможно, сбой».
+        """
+        check = report.get("switcher_check") or {}
+        tips_missing = check.get("tips_without_preload") or []
+        preload_stale = check.get("preload_without_tip") or []
+        ctf_missing = check.get("ctf_missing") or []
+        if not tips_missing and not preload_stale and not ctf_missing:
+            return ""
+        parts = []
+        if tips_missing:
+            parts.append(_t("dlg_switcher_missing_tip", klids=", ".join(tips_missing)))
+        if preload_stale:
+            parts.append(_t("dlg_switcher_stale_preload", klids=", ".join(preload_stale)))
+        if ctf_missing:
+            parts.append(_t("dlg_switcher_ctf_missing", klids=", ".join(ctf_missing)))
+            # Свой совет, а не общий: отсутствие ветки CTF лечится НЕ
+            # перезагрузкой (её делает пользователь вручную), а перезапуском
+            # службы ввода, который выполняет ctfmon при выходе из операции.
+            parts.append(_t("dlg_switcher_ctf_advice"))
+            return "\n" + "\n".join(parts)
+        return "\n" + "\n".join(parts) + "\n" + _t("dlg_switcher_advice")
 
     def _after_delete_error(self, error_msg: str) -> None:
         """Обработка ошибки удаления."""
+        # FIX-13: операция завершена (ошибкой) — разрешаем закрытие окна.
+        self._operation_in_progress = False
         self._progress_stop()
         if self.delete_button:
             self.delete_button.configure(text=_t("btn_delete"), state="normal")
@@ -1751,6 +1969,8 @@ class KeyboardLayoutCleaner(ctk.CTk):
 
     def _start_restore(self, backup: dict[str, Any]) -> None:
         """Выполнить восстановление в фоновом потоке."""
+        # FIX-13: восстановление тоже мутация — запрещаем закрытие окна.
+        self._operation_in_progress = True
         self._set_status(_t("status_restoring"))
         if self.restore_button:
             self.restore_button.configure(state="disabled", text=_t("btn_restore_busy"))
@@ -1781,7 +2001,17 @@ class KeyboardLayoutCleaner(ctk.CTk):
                 msg += _t("dlg_restore_done_uac")
             if lang_ok:
                 msg += _t("dlg_restore_done_langlist")
-            msg += _t("dlg_restore_advice")
+            # FIX-27: сверка переключателя после отката. «Восстановлено» не
+            # означает «раскладка снова в переключателе»: reg import возвращает
+            # ветки реестра, а панель переключения строится по Preload + CTF,
+            # и ctfmon мог вернуть свой кеш поверх импорта. Раньше здесь стоял
+            # безусловный совет «выйдите и войдите» — даже когда расхождения
+            # не было; теперь он показывается по факту.
+            switcher_msg = self._format_switcher_check(result)
+            if switcher_msg:
+                msg += switcher_msg
+            else:
+                msg += _t("dlg_restore_advice")
             self._set_status(_t("status_restore_done"))
             logger.info("Восстановление из %s: успех", backup.get("reg_path", "?"))
             messagebox.showinfo(_t("dlg_result_title"), msg)
@@ -1797,10 +2027,14 @@ class KeyboardLayoutCleaner(ctk.CTk):
                 _t("dlg_error_title"), _t("dlg_restore_failed", detail=detail)
             )
         # Пересканируем, чтобы панель отразила актуальное состояние
+        # FIX-13: операция завершена — снова разрешаем закрытие окна.
+        self._operation_in_progress = False
         self._refresh_after_delete()
 
     def _after_restore_error(self, error_msg: str) -> None:
         """Обработка ошибки восстановления."""
+        # FIX-13: операция завершена (ошибкой) — разрешаем закрытие окна.
+        self._operation_in_progress = False
         self._enable_after_restore()
         self._set_status(_t("status_restore_error"))
         messagebox.showerror(
@@ -1879,16 +2113,23 @@ class KeyboardLayoutCleaner(ctk.CTk):
             # ВАЖНО: передаём --sandbox если включён, чтобы новый процесс
             # тоже работал в песочнице
             sandbox_flag = " --sandbox" if SANDBOX_MODE else ""
+            # FIX-14: передаём SID родителя — elevated-процесс сверит его
+            # со своим SID и откажется работать, если UAC выполнил
+            # повышение под учётной записью другого администратора.
+            parent_sid = _current_user_sid()
+            sid_flag = f" --parent-sid {parent_sid}" if parent_sid else ""
 
             if getattr(sys, "frozen", False):
                 # Сборка exe: перезапускаем сам исполняемый файл
                 target = sys.executable
-                params = f"{sandbox_flag} --elevate"
+                params = f"{sandbox_flag} --elevate{sid_flag}"
             else:
                 # Явное оборачивание пути в двойные кавычки — корректно
                 # обрабатывает пробелы и спецсимволы в пути к скрипту.
                 target = sys.executable
-                params = f'"{os.path.abspath(__file__)}" {sandbox_flag} --elevate'
+                params = (
+                    f'"{os.path.abspath(__file__)}" {sandbox_flag} --elevate{sid_flag}'
+                )
 
             logger.info(
                 "[PID=%d] ShellExecuteW: target=%s, params=%s", pid, target, params
@@ -1896,12 +2137,12 @@ class KeyboardLayoutCleaner(ctk.CTk):
 
             # ShellExecuteW возвращает >32 при успехе и код ошибки (<=32)
             # при неудаче — например, если пользователь отклонил запрос UAC.
-            result_code = ctypes.windll.shell32.ShellExecuteW(
-                None,
+            # FIX-19: прототип HINSTANCE объявлен, вызов через winapi.
+            result_code, _shell_error = winapi.shell_execute(
                 "runas",
                 target,
                 params,
-                None,
+                "",
                 1,
             )
 
@@ -1932,6 +2173,22 @@ class KeyboardLayoutCleaner(ctk.CTk):
                 _t("dlg_error_title"),
                 _t("dlg_elevation_error", error=exc),
             )
+
+    def _on_close(self) -> None:
+        """Обработчик закрытия окна (WM_DELETE_WINDOW) — FIX-13.
+
+        Во время удаления/восстановления окно не закрывается: daemon-поток
+        был бы убит вместе с процессом, ``__exit__`` CtfmonSuspender не
+        выполнился бы, и ctfmon/TextInputHost остались бы остановленными.
+        """
+        if self._operation_in_progress:
+            logger.warning("Закрытие отклонено: идёт операция удаления/восстановления")
+            messagebox.showwarning(
+                _t("dlg_error_title"),
+                _t("dlg_close_blocked"),
+            )
+            return
+        self._release_mutex_and_exit()
 
     def _release_mutex_and_exit(self) -> None:
         """
@@ -1970,14 +2227,24 @@ class KeyboardLayoutCleaner(ctk.CTk):
 
     @staticmethod
     def _show_elevation_error(result_code: int) -> None:
-        """Показать понятное сообщение об ошибке UAC по коду ShellExecuteW."""
+        """Показать понятное сообщение об ошибке UAC по коду ShellExecuteW.
+
+        FIX-18: имена ключей приведены к схеме локалей. Раньше код просил
+        ``dlg_elevation_error_file_not_found`` и ``dlg_elevation_error_
+        path_not_found``/``..._bad_netpath``, а в локалях лежали ключи без
+        ``error_`` — пользователю выводился СЫРОЙ ключ. Исправлять решено
+        здесь, а не в локалях: нужные ключи уже переведены во всех шести
+        файлах, а переименование потребовало бы 24 новых строки перевода
+        впустую и ввело бы семейство ``dlg_elevation_error_*`` рядом с уже
+        существующим ``dlg_elevation_error`` (другая по смыслу строка).
+        """
         error_messages: dict[int, str] = {
-            2: "dlg_elevation_error_file_not_found",
-            3: "dlg_elevation_error_path_not_found",
+            2: "dlg_elevation_file_not_found",
+            3: "dlg_elevation_path_not_found",
             5: "dlg_elevation_access_denied",
-            11: "dlg_elevation_error_association",
+            11: "dlg_elevation_association",
             31: "dlg_elevation_no_assoc",
-            1136: "dlg_elevation_error_bad_netpath",
+            1136: "dlg_elevation_bad_netpath",
             # ERROR_CANCELLED — пользователь нажал «Нет» в окне UAC
             1223: "dlg_elevation_uac_cancelled",
             # ERROR_ELEVATION_REQUIRED — повышение заблокировано политикой
@@ -2010,6 +2277,40 @@ class KeyboardLayoutCleaner(ctk.CTk):
 # ---------------------------------------------------------------------------
 
 
+def _rescue_stopped_input_services() -> None:
+    """Страховка FIX-13: поднять ctfmon, если процесс умер внутри операции.
+
+    Вызывается из atexit/SIGTERM/SIGBREAK: если поток удаления был убит,
+    ``__exit__`` CtfmonSuspender не выполнился и маркер остановки служб
+    остался на диске — запускаем ctfmon и снимаем маркер. Идемпотентно:
+    без маркера — no-op.
+    """
+    try:
+        ensure_input_services_running()
+    except Exception:  # noqa: BLE001
+        logger.debug("Аварийный запуск служб ввода не удался", exc_info=True)
+
+
+def _on_terminate_signal(signum: int, _frame: Any) -> None:
+    """FIX-13: при SIGTERM/SIGBREAK поднять ctfmon, затем завершиться по умолчанию."""
+    _rescue_stopped_input_services()
+    with contextlib.suppress(OSError, ValueError):
+        signal.signal(signum, signal.SIG_DFL)
+    with contextlib.suppress(OSError):
+        os.kill(os.getpid(), signum)
+
+
+def _register_exit_rescue() -> None:
+    """Зарегистрировать страховку аварийного выхода (FIX-13)."""
+    atexit.register(_rescue_stopped_input_services)
+    for sig_name in ("SIGTERM", "SIGBREAK"):
+        sig = getattr(signal, sig_name, None)
+        if sig is None:
+            continue
+        with contextlib.suppress(OSError, ValueError):
+            signal.signal(sig, _on_terminate_signal)
+
+
 def main() -> None:
     """Запустить приложение."""
     args = parse_args()
@@ -2021,6 +2322,20 @@ def main() -> None:
 
         scanner.activate_sandbox()
         cleaner.activate_sandbox()
+
+    # FIX-13: если прошлый прогон был убит внутри CtfmonSuspender
+    # (маркер на диске), поднимаем ctfmon до старта UI. Никогда не
+    # блокируем запуск из-за сбоя страховки.
+    with contextlib.suppress(Exception):
+        ensure_input_services_running()
+    _register_exit_rescue()
+
+    # FIX-14: UAC мог выполнить повышение под учётной записью другого
+    # администратора — тогда HKCU этого процесса чужой профиль. Проверка
+    # ДО мьютекса и UI: чужой профиль не трогаем, пользователю показываем
+    # понятное предупреждение и отменяем запуск.
+    if not _verify_elevated_context(args):
+        sys.exit(0)
 
     # Захватываем мьютекс — защита от параллельных запусков
     mutex_handle, last_error = _acquire_mutex(is_elevate=args.elevate)

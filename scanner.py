@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 import applog
+import layout_ids
 from config import (
     _SANDBOX_ROOT,
     TIMEOUTS,
@@ -21,105 +22,41 @@ from config import (
     enable_sandbox,
     is_sandbox_enabled,
 )
+from layout_ids import (
+    KLID_RE as _KLID_RE,
+)
+from layout_ids import (
+    LAYOUT_MAP,
+)
+from layout_ids import (
+    METADATA_VALUE_NAMES as _METADATA_VALUE_NAMES,
+)
+from layout_ids import (
+    TIP_KLID_RE as _TIP_KLID_RE,
+)
 from winproc import run_hidden
 
 logger = logging.getLogger("layout_cleaner")
 applog.setup_null_handler(logger)
 
 # ---------------------------------------------------------------------------
-# Fallback-словарь BCP-47 -> KLID HEX
+# FIX-8: реэкспорт единого резолвера идентификаторов (layout_ids).
+# Имена с подчёркиванием сохранены как тонкие обёртки: на них ссылаются
+# cleaner.py, тесты и внешний код. Единственный источник знаний — layout_ids;
+# ниже НЕ должно появляться новых копий таблиц/регулярных выражений.
 # ---------------------------------------------------------------------------
-LAYOUT_MAP: dict[str, str] = {
-    # Russian
-    "ru-RU": "00000419",
-    # English (US)
-    "en-US": "00000409",
-    # English (UK)
-    "en-GB": "00000809",
-    # French
-    "fr-FR": "0000040c",
-    # German
-    "de-DE": "00000407",
-    # Italian
-    "it-IT": "00000410",
-    # Spanish
-    "es-ES": "0000040a",
-    # Japanese
-    "ja-JP": "00000411",
-    # Chinese (Simplified)
-    "zh-CN": "00000804",
-    # Chinese (Traditional)
-    "zh-TW": "00000404",
-    # Korean
-    "ko-KR": "00000412",
-    # Arabic
-    "ar-SA": "00000401",
-    # Finnish
-    "fi-FI": "0000040b",
-    # Ukrainian
-    "uk-UA": "00020422",
-    # Belarusian
-    "be-BY": "00000423",
-    # Estonian
-    "et-EE": "0000025f",
-    # Lithuanian
-    "lt-LT": "00000427",
-    # Latvian
-    "lv-LV": "00000425",
-    # Portuguese (Portugal)
-    "pt-PT": "00000816",
-    # Turkish
-    "tr-TR": "0000041f",
-    # --- Расширение fallback (стандартные раскладки: KLID = 0000+LANGID) ---
-    # Armenian
-    "hy-AM": "0000042b",
-    # Georgian
-    "ka-GE": "00000437",
-    # Hebrew
-    "he-IL": "0000040d",
-    # Thai
-    "th-TH": "0000041e",
-    # Vietnamese
-    "vi-VN": "0000042a",
-    # Indonesian
-    "id-ID": "00000421",
-    # Malay
-    "ms-MY": "0000043e",
-    # Persian
-    "fa-IR": "00000429",
-    # Bulgarian
-    "bg-BG": "00000402",
-    # Croatian
-    "hr-HR": "0000041a",
-    # Czech
-    "cs-CZ": "00000405",
-    # Danish
-    "da-DK": "00000406",
-    # Dutch
-    "nl-NL": "00000413",
-    # Greek
-    "el-GR": "00000408",
-    # Hungarian
-    "hu-HU": "0000040e",
-    # Norwegian (Bokmål)
-    "nb-NO": "00000414",
-    # Polish
-    "pl-PL": "00000415",
-    # Portuguese (Brazil)
-    "pt-BR": "00000416",
-    # Romanian
-    "ro-RO": "00000418",
-    # Serbian (Cyrillic)
-    "sr-Cyrl-RS": "00000c1a",
-    # Serbian (Latin)
-    "sr-Latn-RS": "0000081a",
-    # Slovak
-    "sk-SK": "0000041b",
-    # Slovenian
-    "sl-SI": "00000424",
-    # Swedish
-    "sv-SE": "0000041d",
-}
+
+# Обратный словарь KLID -> теги (сопоставление в SettingSync)
+_KLID_TO_TAGS = layout_ids.KLID_TO_TAGS
+
+# Имя родительского ключа CTF (LANGID в виде 0x????????)
+_CTF_LANGID_DIR_RE = layout_ids.CTF_LANGID_DIR_RE
+
+
+def _normalize_klid_token(raw: str, key_path: str) -> str:
+    """Привести KLID-подобный токен из CTF/User Profile к канонической 8-HEX."""
+    return layout_ids.normalize_klid_token(raw, key_path)
+
 
 
 def _safe_str(val: object) -> str:
@@ -399,58 +336,10 @@ _RECURSIVE_SCAN: set[str] = {
 _ORIGINAL_RECURSIVE_SCAN: set[str] = set(_RECURSIVE_SCAN)
 
 
-# Нормализация decimal-HKL: CTF хранит KeyboardLayout десятичным числом
-_CTF_LANGID_DIR_RE = re.compile(r"0x([0-9a-f]{8})")
-
-
-def _normalize_klid_token(raw: str, key_path: str) -> str:
-    """
-    Привести KLID-подобный токен из CTF/User Profile к канонической 8-HEX форме.
-
-    CTF хранит HKL (старшее слово — LANGID языка, младшее — KLID
-    раскладки) в ДЕСЯТИЧНОМ виде: 68748313 == 0x04190419 (язык 0419 +
-    раскладка 00000419); короткий decimal 1033 == 0x00000409 — тот же
-    KLID. Строка из одних цифр без ведущего нуля двусмысленна, поэтому
-    выбирается интерпретация (decimal → hex или чтение как hex), у которой
-    старшее слово совпадает с LANGID родительского ключа ``0x????????``
-    из пути; без контекста — decimal-чтение.
-    """
-    s = raw.strip().lower()
-    if not s or len(s) > 10 or not re.fullmatch(r"[0-9a-f]+", s):
-        return s
-    # Символы a-f — это уже hex-форма (00000809, 04190419): возвращаем как есть
-    if any(ch in "abcdef" for ch in s):
-        return s
-    # Только цифры. 8-значная строка с ведущим нулём — hex-KLID (00000409)
-    if len(s) == 8 and s[0] == "0":
-        return s
-    # "0409"-стиль (4 hex-цифры с ведущим нулём) — это LANGID = KLID языка
-    if len(s) >= 3 and len(s) < 8 and s[0] == "0":
-        try:
-            return f"{int(s, 16):08x}"
-        except ValueError:
-            return s
-    readings = [int(s, 10)]
-    if len(s) >= 8:
-        readings.append(int(s, 16))
-    lang = _CTF_LANGID_DIR_RE.search(key_path.lower())
-    parent = int(lang.group(1), 16) & 0xFFFF if lang else None
-    for cand in readings:
-        if cand <= 0 or cand > 0xFFFFFFFF:
-            continue
-        if parent is not None and ((cand >> 16) & 0xFFFF) == parent:
-            return f"{cand:08x}"
-    # Без контекста — decimal-чтение (1033 → 00000409, 68748313 → 04190419)
-    cand = readings[0]
-    if 0 < cand <= 0xFFFFFFFF:
-        return f"{cand:08x}"
-    return s
-
-
-# Обратный словарь KLID → список BCP-47 тегов (для сопоставления в SettingSync)
-_KLID_TO_TAGS: dict[str, list[str]] = {}
-for _tag, _klid in LAYOUT_MAP.items():
-    _KLID_TO_TAGS.setdefault(_klid.lower(), []).append(_tag.lower())
+# ---------------------------------------------------------------------------
+# Нормализация и обратные словари перенесены в layout_ids (FIX-8);
+# локальные копии регулярных выражений и таблиц удалены.
+# ---------------------------------------------------------------------------
 
 
 def _klid_matches_value(layout_klid: str, value: str) -> bool:
@@ -584,30 +473,8 @@ def get_layout_name(hex_code: str) -> str:
 # PowerShell integration
 # ---------------------------------------------------------------------------
 
-
-# InputMethodTips имеют вид "0419:00000419" (LANGID:KLID) для обычных
-# раскладок и "0411:{GUID}" — для CJK IME-раскладок.
-_TIP_KLID_RE = re.compile(r"^[0-9A-Fa-f]{4}:([0-9A-Fa-f]{8})$")
-
-
-# Подлинный KLID — ровно 8 HEX-символов (отсеивает мусорные значения
-# вида "1" или "ru-RU en-GB", встречающиеся в User Profile / CTF)
-_KLID_RE = re.compile(r"^[0-9a-f]{8}$")
-
-# Имена значений-МЕТАДАННЫХ языкового профиля — НЕ раскладки, даже если
-# содержимое выглядит как KLID. Классический пример:
-#   ...\User Profile\en-US\FeaturesToInstall = 000006ff
-# — это битовая маска feature-флагов, а не KLID; до этой правки сканер
-# ошибочно показывал "Layout (000006ff)". Имена значений реестра не
-# чувствительны к регистру — сравниваем в lowercase.
-_METADATA_VALUE_NAMES = frozenset(
-    {
-        "featurestoinstall",  # битовая маска флагов (напр. "000006ff")
-        "cachedlanguagename",  # отображаемое имя языка
-        "showcasing",  # опции отображения (Languages)
-        "windowsoverride",  # переопределение языка интерфейса (тег, не раскладка)
-    }
-)
+# _TIP_KLID_RE, _KLID_RE и _METADATA_VALUE_NAMES импортированы из layout_ids
+# (FIX-8) — единственного источника идентификаторов раскладок.
 
 
 def _parse_language_entries(stdout: str) -> list[dict[str, Any]]:
@@ -683,6 +550,106 @@ def _get_language_list_from_powershell() -> list[dict[str, Any]]:
     except (FileNotFoundError, subprocess.TimeoutExpired, OSError) as exc:
         logger.warning("PowerShell недоступен: %s", exc)
         return []
+
+
+def check_switcher_consistency() -> dict[str, list[str]]:
+    """FIX-26: сверка списка языков с тем, что способен показать переключатель.
+
+    Симптом, из-за которого это нужно: язык ПРОПАДАЕТ из панели
+    переключения раскладок, но в Параметрах языка остаётся «установленным»,
+    и помогает только перезагрузка. Причина в том, что это ДВА разных
+    хранилища:
+
+      * список языков (WinRT) — его показывает Параметры языка;
+      * ``Preload`` + ``CTF\\Assemblies`` — по ним строит панель переключения.
+
+    Операция может развести их, и раньше приложение этого не замечало:
+    пользователь оставался с «призрачной» раскладкой без объяснений.
+
+    Функция ТОЛЬКО ЧИТАЕТ. Ничего не чинит и не синхронизирует: CTF —
+    кэш, который Windows пересобирает при входе, и запись в него вслепую
+    опаснее, чем честная диагностика. Задача функции — показать расхождение
+    и дать действие, а не сделать вид, что проблемы нет.
+
+    Returns
+    -------
+    dict[str, list[str]]
+        ``tips_without_preload`` — KLID из списка языков, которого нет в
+        ``Preload``; переключатель не сможет его предложить;
+        ``preload_without_tip`` — запись ``Preload``, которой нет ни в одном
+        языке (остаток старой раскладки);
+        ``ctf_missing`` — KLID языка, для которого нет ветки
+        ``CTF\\Assemblies\\0x<LangID>``; ``LangID`` — младшие 4 байта
+        KLID (из ``00000419`` это ``0419``), а старшие ``0000`` — тип
+        клавиатуры, к языку отношения не имеют.
+
+    Все три поля содержат ПОЛНЫЕ 8-HEX KLID в едином формате: значения
+    уходят и в лог, и в текст диалога, где смешение ``0409`` и
+    ``00000409`` выглядело бы как повреждённые данные.
+    """
+    entries = _get_language_list_from_powershell()
+    list_klids: set[str] = set()
+    for entry in entries:
+        klid = str(entry.get("KeyboardLayoutId", "")).lower()
+        if klid and _KLID_RE.match(klid):
+            list_klids.add(klid)
+
+    preload_klids = {
+        klid
+        for klid in _get_preload_keys(
+            winreg.HKEY_CURRENT_USER, "Keyboard Layout\\Preload"
+        )
+        if _KLID_RE.match(klid)
+    }
+
+    # CTF\\Assemblies\\0x<LangID> — ветки языка. Ищем её по МОДУЛЬНОЙ
+    # константе веток: activate_sandbox() подменяет её на изолированную,
+    # и сверка в песочнице не должна читать живой CTF пользователя.
+    ctf_langids: set[str] = set()
+    for subkey_path, _scan_type in HKCU_BRANCHES:
+        if "\\CTF" not in subkey_path:
+            continue
+        assemblies = subkey_path.rstrip("\\") + "\\Assemblies"
+        try:
+            with winreg.OpenKey(
+                winreg.HKEY_CURRENT_USER, assemblies, 0, winreg.KEY_READ
+            ) as key:
+                idx = 0
+                while True:
+                    try:
+                        name = winreg.EnumKey(key, idx)
+                    except OSError:
+                        break
+                    idx += 1
+                    m = re.match(r"^0x([0-9a-fA-F]{4,8})$", name)
+                    if m:
+                        ctf_langids.add(m.group(1)[-4:].lower())
+        except (FileNotFoundError, PermissionError, OSError):
+            continue
+
+    result = {
+        "tips_without_preload": sorted(list_klids - preload_klids),
+        "preload_without_tip": sorted(preload_klids - list_klids),
+        # FIX-27: возвращаем ПОЛНЫЙ KLID, а не «голый» LANGID (0409).
+        # LANGID нужен только для сопоставления с веткой CTF; пользователю
+        # показывается тот же KLID, что и в двух других полях, — «0409» в
+        # списке раскладок не встречается и выглядит как мусор. Раньше это
+        # поле уходило в лог, где несоответствие форматов было незаметно.
+        "ctf_missing": sorted(
+            klid for klid in list_klids if klid[-4:] not in ctf_langids
+        ),
+    }
+    for key_name, values in result.items():
+        if values:
+            logger.warning("Сверка переключателя: %s = %s", key_name, ", ".join(values))
+    return result
+
+
+def is_switcher_consistent(report: dict[str, list[str]] | None) -> bool:
+    """Есть ли расхождение, способное скрыть раскладку из переключателя."""
+    if not report:
+        return True
+    return not (report.get("tips_without_preload") or report.get("preload_without_tip"))
 
 
 # ---------------------------------------------------------------------------

@@ -24,8 +24,10 @@ import pytest
 
 import cleaner
 import config
+import langlist
 import scanner
 import winproc
+from conftest import fake_root_consts, registry_modules
 
 # ---------------------------------------------------------------------------
 # Legacy helpers (kept for compatibility with existing tests)
@@ -50,20 +52,22 @@ class _MultiPatch:
 
 
 def _install_fake_winreg(fake):
-    """Патчим winreg в scanner и cleaner единым FakeWinreg-объектом."""
-    return _MultiPatch(
-        mock.patch.object(scanner, "winreg", fake),
-        mock.patch.object(cleaner, "winreg", fake),
-        mock.patch.object(
-            cleaner,
-            "_ROOT_CONST",
-            {
-                "HKCU": fake.HKEY_CURRENT_USER,
-                "HKU": fake.HKEY_USERS,
-                "HKLM": fake.HKEY_LOCAL_MACHINE,
-            },
-        ),
-    )
+    """Подменить winreg во ВСЕХ модулях, которые с ним работают.
+
+    FIX-10 (шаги 1-4): список берётся из ``conftest.registry_modules()``,
+    а не перечисляется здесь. Перечисление устаревало при каждом переносе
+    кода, и на шаге 4 новый ``settings`` выпал из списка — из-за чего
+    ``TestLanguageSync`` писал в НАСТОЯЩИЙ реестр машины, на которой шли
+    тесты. Статический список не способен заметить модуль, которого в нём
+    нет; динамический — заметит.
+    """
+    roots = fake_root_consts(fake)
+    patches = []
+    for module in registry_modules():
+        patches.append(mock.patch.object(module, "winreg", fake))
+        if hasattr(module, "_ROOT_CONST"):
+            patches.append(mock.patch.object(module, "_ROOT_CONST", roots))
+    return _MultiPatch(*patches)
 
 
 def _proc(stdout="", stderr="", returncode=0, args=None):
@@ -903,7 +907,7 @@ class TestRestoreLanguageList:
             [{"LanguageTag": "en-US", "InputMethodTips": ["0409:00000409"]}]
         )
         captured, fake_run = self._capture_success_run()
-        with mock.patch.object(cleaner, "run_hidden", fake_run):
+        with mock.patch.object(langlist, "run_hidden", fake_run):
             ok = cleaner.restore_language_list(jp)
         assert ok is True
         # Команда: [powershell, -NoProfile, -File, PS1_PATH, -JsonPath, JSON_PATH]
@@ -918,36 +922,57 @@ class TestRestoreLanguageList:
         assert "Set-WinUserLanguageList" in ps_content
         assert '"SUCCESS"' in ps_content or "SUCCESS" in ps_content
 
-    def test_single_quotes_are_escaped(self):
+    def test_injection_tag_rejected_before_powershell(self):
+        """FIX-25: невалидный тег отклоняется ДО запуска PowerShell.
+
+        Прежде тест требовал, чтобы тег "O'Brien" дошёл до PS1. Теперь
+        поверхность инъекции закрыта входной валидацией: BCP-47-тег не может
+        содержать апостроф, поэтому PowerShell просто не запускается.
+        """
         jp = self._write_json(
             [
                 {
                     "LanguageTag": "O'Brien",
-                    "InputMethodTips": ["0419:00000419", "It's"],
+                    "InputMethodTips": [
+                        "0419:00000419",
+                        "0409:{AAAAAAA1-2222-3333-4444-555555555555}",
+                    ],
                 }
             ]
         )
-        _captured, fake_run = self._capture_success_run()
-        with mock.patch.object(cleaner, "run_hidden", fake_run):
-            assert cleaner.restore_language_list(jp) is True
+        fake_run = mock.Mock()
+        with mock.patch.object(langlist, "run_hidden", fake_run):
+            assert cleaner.restore_language_list(jp) is False
+        # PowerShell не запускался вовсе — нечего было инъецировать.
+        fake_run.assert_not_called()
         # PS1-скрипт читает JSON напрямую — escape делается на уровне JSON,
         # а не PowerShell-строк:
         ps_content = (cleaner._PS_DIR / "layout_cleaner_restore.ps1").read_text(
             encoding="utf-8"
         )
         assert "ConvertFrom-Json" in ps_content  # Чтение JSON
+        # Второй рубеж: сам скрипт тоже проверяет форму тега.
+        assert "-isnot [string]" in ps_content
+        assert "$TagPattern" in ps_content
 
     def test_dict_input_supported(self):
         jp = self._write_json({"LanguageTag": "de-DE", "InputMethodTips": []})
         captured, fake_run = self._capture_success_run()
-        with mock.patch.object(cleaner, "run_hidden", fake_run):
+        with mock.patch.object(langlist, "run_hidden", fake_run):
             assert cleaner.restore_language_list(jp) is True
         cmd = captured["cmd"]
         assert "layout_cleaner_restore.ps1" in cmd[-3]  # PS1-файл
 
-    def test_list_language_tag_and_scalar_tip_normalized(self):
-        # PowerShell может вернуть LanguageTag массивом (["ru", "en-US"]),
-        # а одна раскладка — строкой, а не списком.
+    def test_array_language_tag_rejected_not_silently_unwrapped(self):
+        """FIX-25: LanguageTag-массив отклоняется, а не «чинится».
+
+        Прежде тест ТРЕБОВАЛ, чтобы ["ru", "en-US"] превратился в "ru":
+        код молча брал первый тег, и снимок доходил до
+        Set-WinUserLanguageList как один язык с раскладками обоих языков,
+        а -Force заменял список языков пользователя. Именно этим у
+        пользователя пропала русская раскладка из переключателя.
+        Теперь файл отклоняется целиком, PowerShell не запускается.
+        """
         jp = self._write_json(
             [
                 {
@@ -955,6 +980,20 @@ class TestRestoreLanguageList:
                     "InputMethodTips": "0419:00000419",
                 }
             ]
+        )
+        fake_run = mock.Mock()
+        with mock.patch.object(langlist, "run_hidden", fake_run):
+            assert cleaner.restore_language_list(jp) is False
+        fake_run.assert_not_called()
+
+    def test_scalar_tip_normalized_to_list(self):
+        """FIX-25: нормализация одиночной раскладки сохранена.
+
+        Отделено от случая массивного тега: строка вместо списка — это
+        допустимая форма записи, её по-прежнему приводим к списку.
+        """
+        jp = self._write_json(
+            [{"LanguageTag": "ru", "InputMethodTips": "0419:00000419"}]
         )
         captured = {}
 
@@ -965,17 +1004,29 @@ class TestRestoreLanguageList:
             captured["content"] = Path(cmd[-1]).read_text(encoding="utf-8")
             return _proc(returncode=0, stdout="SUCCESS")
 
-        with mock.patch.object(cleaner, "run_hidden", fake_run):
+        with mock.patch.object(langlist, "run_hidden", fake_run):
             assert cleaner.restore_language_list(jp) is True
-        # Во временный JSON для PS1 попадает первый непустой тег и список раскладок.
+        # Во временный JSON для PS1 попадает dict-запись (FIX-3): раньше
+        # писались массивы [tag, tips], которые PS-скрипт не мог прочитать
+        # через $entry.LanguageTag (см. регрессию в test_restore_powershell).
         written = json.loads(captured["content"])
-        assert written == [["ru", ["0419:00000419"]]]
+        assert written == [{"LanguageTag": "ru", "InputMethodTips": ["0419:00000419"]}]
+
+    def test_glued_tag_rejected(self):
+        """FIX-25: склейка тегов "ru en-US" — не BCP-47, файл отклоняется."""
+        jp = self._write_json(
+            [{"LanguageTag": "ru en-US", "InputMethodTips": ["0419:00000419"]}]
+        )
+        fake_run = mock.Mock()
+        with mock.patch.object(langlist, "run_hidden", fake_run):
+            assert cleaner.restore_language_list(jp) is False
+        fake_run.assert_not_called()
 
     def test_empty_list_language_tag_is_skipped(self):
         jp = self._write_json(
             [{"LanguageTag": [], "InputMethodTips": ["0409:00000409"]}]
         )
-        with mock.patch.object(cleaner, "run_hidden", _proc):
+        with mock.patch.object(langlist, "run_hidden", _proc):
             assert cleaner.restore_language_list(jp) is False
 
     def test_false_without_success_marker(self):
@@ -986,7 +1037,7 @@ class TestRestoreLanguageList:
         def fake_run(cmd, **kw):
             return _proc(returncode=0, stdout="FAILED")
 
-        with mock.patch.object(cleaner, "run_hidden", fake_run):
+        with mock.patch.object(langlist, "run_hidden", fake_run):
             assert cleaner.restore_language_list(jp) is False
 
     def test_false_on_timeout(self):
@@ -997,18 +1048,18 @@ class TestRestoreLanguageList:
         def fake_run(cmd, **kw):
             raise subprocess.TimeoutExpired(cmd=cmd, timeout=45)
 
-        with mock.patch.object(cleaner, "run_hidden", fake_run):
+        with mock.patch.object(langlist, "run_hidden", fake_run):
             assert cleaner.restore_language_list(jp) is False
 
     def test_false_on_invalid_json(self):
         jp = Path(_tmp_dir()) / "langlist.json"
         jp.write_text("{not-json", encoding="utf-8")
-        with mock.patch.object(cleaner, "run_hidden", _proc):
+        with mock.patch.object(langlist, "run_hidden", _proc):
             assert cleaner.restore_language_list(jp) is False
 
     def test_false_when_no_valid_entries(self):
         jp = self._write_json([{"LanguageTag": "  ", "InputMethodTips": []}])
-        with mock.patch.object(cleaner, "run_hidden", _proc):
+        with mock.patch.object(langlist, "run_hidden", _proc):
             assert cleaner.restore_language_list(jp) is False
 
 
@@ -1174,7 +1225,7 @@ class TestReviewHardening:
             captured["cmd"] = cmd
             return _proc(returncode=0, stdout="SUCCESS")
 
-        monkeypatch.setattr(cleaner, "run_hidden", fake_run)
+        monkeypatch.setattr(langlist, "run_hidden", fake_run)
         assert cleaner.restore_language_list(jp) is True
 
         cmd = captured["cmd"]

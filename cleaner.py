@@ -1458,6 +1458,11 @@ if __name__ == "__main__":
 
     from config import enable_sandbox
 
+    # FIX-32: печать отчёта по-русски на «западной» кодовой странице
+    # (cp1252) роняла CLI UnicodeEncodeError — уже ПОСЛЕ выполнения
+    # операции. Кодировку не меняем: на cp1251 вывод остаётся читаемым.
+    applog.make_output_safe()
+
     parser = argparse.ArgumentParser(
         description="Keyboard Layout Cleaner — CLI для удаления раскладок клавиатуры."
     )

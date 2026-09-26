@@ -16,7 +16,7 @@ from unittest.mock import patch
 import pytest
 
 # Import shared mocks from conftest (avoids duplication)
-from conftest import _make_ctk
+from conftest import _make_ctk, unique_mutex_name
 
 
 def _patch_main(monkeypatch, frozen=False, sandbox=False):
@@ -123,14 +123,17 @@ class TestMutexMechanism:
         assert len(main._MUTEX_NAME) > 0
 
     def test_mutex_create_and_close(self):
-        handle = ctypes.windll.kernel32.CreateMutexW(None, False, "TestMutexUnit")
+        handle = ctypes.windll.kernel32.CreateMutexW(
+            None, False, unique_mutex_name("TestMutexUnit")
+        )
         assert handle != 0
         ctypes.windll.kernel32.CloseHandle(handle)
 
     def test_mutex_error_already_exists(self):
-        h1 = ctypes.windll.kernel32.CreateMutexW(None, False, "TestMutexUnit2")
+        name = unique_mutex_name("TestMutexUnit2")
+        h1 = ctypes.windll.kernel32.CreateMutexW(None, False, name)
         assert h1 != 0
-        h2 = ctypes.windll.kernel32.CreateMutexW(None, False, "TestMutexUnit2")
+        h2 = ctypes.windll.kernel32.CreateMutexW(None, False, name)
         err = ctypes.windll.kernel32.GetLastError()
         assert err == 183
         ctypes.windll.kernel32.CloseHandle(h1)
@@ -139,11 +142,12 @@ class TestMutexMechanism:
     def test_mutex_polling(self):
         import time
 
-        h = ctypes.windll.kernel32.CreateMutexW(None, False, "TestMutexPoll")
+        name = unique_mutex_name("TestMutexPoll")
+        h = ctypes.windll.kernel32.CreateMutexW(None, False, name)
         assert h != 0
         ctypes.windll.kernel32.CloseHandle(h)
         time.sleep(0.05)
-        test_h = ctypes.windll.kernel32.CreateMutexW(None, False, "TestMutexPoll")
+        test_h = ctypes.windll.kernel32.CreateMutexW(None, False, name)
         err = ctypes.windll.kernel32.GetLastError()
         ctypes.windll.kernel32.CloseHandle(test_h)
         assert err != 183
@@ -152,12 +156,14 @@ class TestMutexMechanism:
         """Тест: новый процесс может захватить мьютекс после освобождения старым."""
         import time
 
+        name = unique_mutex_name("TestMutexElevate")
+
         # Создаём мьютекс (имитация старого процесса)
-        h1 = ctypes.windll.kernel32.CreateMutexW(None, False, "TestMutexElevate")
+        h1 = ctypes.windll.kernel32.CreateMutexW(None, False, name)
         assert h1 != 0
 
         # Новый процесс пытается создать мьютекс — получает ERROR_ALREADY_EXISTS
-        h2 = ctypes.windll.kernel32.CreateMutexW(None, False, "TestMutexElevate")
+        h2 = ctypes.windll.kernel32.CreateMutexW(None, False, name)
         err = ctypes.windll.kernel32.GetLastError()
         assert err == 183  # ERROR_ALREADY_EXISTS
 
@@ -169,7 +175,7 @@ class TestMutexMechanism:
         time.sleep(0.1)
 
         # Теперь новый процесс может создать мьютекс
-        h3 = ctypes.windll.kernel32.CreateMutexW(None, True, "TestMutexElevate")
+        h3 = ctypes.windll.kernel32.CreateMutexW(None, True, name)
         err = ctypes.windll.kernel32.GetLastError()
         assert err != 183  # Мьютекс успешно создан
         assert h3 != 0

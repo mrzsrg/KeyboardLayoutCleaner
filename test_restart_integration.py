@@ -1,4 +1,5 @@
 import contextlib
+import ctypes
 import os
 import subprocess
 import tempfile
@@ -6,15 +7,48 @@ import time
 
 import pytest
 
-_MUTEX_NAME = r"Local\TestKLC_FullRestart_{B4G9C3D2-8E5F-4B9C-9D7G-2F3E4G5H6I7J}"
+from conftest import unique_mutex_name
+
+_MUTEX_NAME = unique_mutex_name(
+    r"Local\TestKLC_FullRestart_{B4G9C3D2-8E5F-4B9C-9D7G-2F3E4G5H6I7J}"
+)
 
 
 def _create_script(name, content):
-    """Создать временный Python скрипт."""
-    path = os.path.join(tempfile.gettempdir(), name)
+    """Создать временный Python скрипт.
+
+    Имя файла дополняется PID намеренно. Раньше здесь было фиксированное
+    ``klc_test_old.py``: два прогона рядом писали в ОДИН файл, и `finally`
+    первого удалял файл, пока второй процесс его ещё запускал — «старый
+    процесс» умирал, не успев создать мьютекс, и тест висел 15 с на
+    ожидании. Это то же самое, что с именем мьютекса: общее имя на двух
+    параллельных прогонах.
+    """
+    path = os.path.join(tempfile.gettempdir(), f"{name}_{os.getpid()}.py")
     with open(path, "w", encoding="utf-8") as f:
         f.write(content)
     return path
+
+
+def _wait_until_mutex_exists(name, timeout=15.0):
+    """Дождаться, пока мьютекс РЕАЛЬНО создан, а не «подождать полсекунды».
+
+    Тест моделирует «приложение запущено, потом перезапускается», и раньше
+    просто спал 0.5 с перед старом второго процесса. Это предположение о
+    скорости запуска Python: под нагрузкой (два прогона одновременно, CI)
+    новый процесс успевал создать мьютекс РАНЬШЕ старого, и «старый»
+    получал ERROR_ALREADY_EXISTS, сам выходил с кодом 1, а тест падал с
+    «Old process failed». Ждать нужно состояние, а не время.
+    """
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        handle = ctypes.windll.kernel32.CreateMutexW(None, False, name)
+        existed = ctypes.windll.kernel32.GetLastError() == 183
+        ctypes.windll.kernel32.CloseHandle(handle)
+        if existed:
+            return True
+        time.sleep(0.05)
+    return False
 
 
 class TestMutexFullRestart:
@@ -110,8 +144,11 @@ else:
                 text=True,
             )
 
-            # Даём старому процессу время создать мьютекс
-            time.sleep(0.5)
+            # Ждём не «полсекунды», а факта: пока первый процесс не создал
+            # мьютекс, второй запускать бессмысленно — он перехватит его.
+            assert _wait_until_mutex_exists(_MUTEX_NAME), (
+                "старый процесс не создал мьютекс"
+            )
 
             # Запускаем новый процесс
             new_proc = subprocess.Popen(

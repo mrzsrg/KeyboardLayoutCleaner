@@ -31,6 +31,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import applog
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
@@ -143,6 +145,10 @@ def verify_signature(exe_path: Path, signtool: Path | None = None) -> bool:
 
 
 def main() -> None:
+    # FIX-32: сообщения журнала по-русски, а консоль может быть cp1252 —
+    # печать тогда падает. Кодировку не меняем, разрешаем замену символа.
+    applog.make_output_safe()
+
     parser = argparse.ArgumentParser(
         description="Подпись exe-файла через signtool.exe (Windows SDK)"
     )

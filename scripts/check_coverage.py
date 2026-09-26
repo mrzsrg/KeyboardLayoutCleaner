@@ -25,6 +25,25 @@ COVERAGE_XML = ROOT / "coverage.xml"
 MUST_NOT_UNDERPERFORM = ("cleaner.py",)
 
 
+def _force_utf8_output() -> None:
+    """Перевести вывод в UTF-8, иначе русский текст роняет скрипт.
+
+    На runner'е GitHub ``sys.stdout`` кодируется cp1252 (ANSI-кодовая
+    страница), и любая русская буква в сообщении даёт UnicodeEncodeError.
+    Проверка покрытия падала не из-за цифр, а из-за печати: строка
+    «(общее 73.2 %)» умирала на символах 24-28, и проверка НИКОГДА не
+    доходила до сравнения. Локально это не воспроизводится — консоль
+    разработчика UTF-8, поэтому баг жил незамеченным.
+
+    ``errors="replace"`` — страховка: вывод с цифрами важнее экзотического
+    символа, и молчаливый «?» лучше падения.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:  # обычный файл/консоль; у подменённых — нет
+            reconfigure(encoding="utf-8", errors="replace")
+
+
 def _rate(element: ET.Element) -> float:
     """Процент покрытия по элементу отчёта."""
     line_rate = float(element.get("line-rate", "0"))
@@ -32,6 +51,7 @@ def _rate(element: ET.Element) -> float:
 
 
 def main() -> int:
+    _force_utf8_output()
     if not COVERAGE_XML.is_file():
         print(  # noqa: T201 — скрипт для CLI
             f"{COVERAGE_XML.name} не найден — прогон сначала с --cov-report=xml"

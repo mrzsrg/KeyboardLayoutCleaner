@@ -5,6 +5,7 @@
 любом исходе, а сбой выгрузки отменяет удаление.
 """
 import subprocess
+from pathlib import Path
 from typing import ClassVar
 
 import pytest
@@ -12,6 +13,7 @@ import pytest
 import capabilities
 import cleaner
 import ddu
+import mutate
 
 
 class FakeReg:
@@ -20,22 +22,44 @@ class FakeReg:
     ``reg query`` по умолчанию ПРОВАЛЕН (код 1) — то есть подгрузки нет.
     Иначе каждый тест считал бы hive уже загруженным и уходил в ветку
     «забытая подгрузка».
+
+    На ``reg save`` файл-адресат реально создаётся: настоящая команда тоже
+    пишет файл, и без этого проверки «правка дошла до шаблона» и «пустой
+    файл не принимается» проверяли бы несуществующий файл.
     """
 
     DEFAULTS: ClassVar[dict[str, int]] = {"query": 1}
+    #: Содержимое, которым ``reg save`` «записывает» подгруженный hive.
+    SAVED: ClassVar[bytes] = b"SAVED-HIVE"
 
-    def __init__(self, returncodes=None):
+    def __init__(self, returncodes=None, saved=SAVED):
         self.calls: list[list[str]] = []
         self.returncodes = {**self.DEFAULTS, **(returncodes or {})}
+        self.saved = saved
 
     def __call__(self, cmd, **kwargs):
         args = list(cmd[1:])  # без "reg"
         self.calls.append(args)
-        code = self.returncodes.get(args[0].lower(), 0)
+        verb = args[0].lower()
+        code = self.returncodes.get(verb, 0)
+        if verb == "save" and code == 0:
+            Path(args[2]).write_bytes(self.saved)
         return subprocess.CompletedProcess(cmd, code, b"", b"")
 
     def verbs(self) -> list[str]:
         return [c[0].lower() for c in self.calls]
+
+
+@pytest.fixture(autouse=True)
+def _clean_save_error():
+    """Канал ошибки сохранения шаблона живёт в модуле — чистим между тестами.
+
+    Иначе сбой из одного теста попадает в отчёт следующего, и упавший тест
+    выглядит как не связанный с причиной.
+    """
+    ddu.take_save_error()
+    yield
+    ddu.take_save_error()
 
 
 @pytest.fixture
@@ -44,6 +68,17 @@ def fake_reg(monkeypatch):
     reg = FakeReg()
     monkeypatch.setattr(ddu.winproc, "run_hidden", reg)
     return reg
+
+
+def _reg_ok(args, timeout=30):
+    """Заглушка reg.exe для «всё успешно»; файловые команды пишут файлы.
+
+    ``reg save``, не создавший файл, — это не то, что делает настоящая
+    команда: такой модуль проверял бы ветку отказа вместо ветки успеха.
+    """
+    if args[0].lower() == "save":
+        Path(args[2]).write_bytes(FakeReg.SAVED)
+    return subprocess.CompletedProcess(["reg", *args], 0, b"", b"")
 
 
 @pytest.fixture
@@ -151,6 +186,301 @@ def test_hive_is_unloaded_after_exception(fake_reg, allowed):
     assert fake_reg.verbs()[-1] == "unload"
 
 
+# ---------------------------------------------------------------------------
+# reg save: правки шаблона обязаны попасть в файл (главный дефект инцидента)
+# ---------------------------------------------------------------------------
+
+
+def test_mutation_is_saved_to_disk_before_unload(fake_reg, allowed):
+    """``reg save`` до ``reg unload``, иначе правки шаблона теряются.
+
+    ``reg unload`` ОТБРАСЫВАЕТ изменения подгруженного hive. Без явного
+    ``reg save`` чистка проходила, в журнале были строки об успехе, а
+    ``NTUSER.DAT`` оставался байт в байт прежним — US возвращалась после
+    перезагрузки. Порядок важен: после unload сохранять уже нечего.
+    """
+    with ddu.mounted(save=True):
+        pass
+
+    verbs = fake_reg.verbs()
+    assert verbs == ["query", "load", "save", "unload"], verbs
+    save_call = next(c for c in fake_reg.calls if c[0].lower() == "save")
+    assert save_call[1] == f"HKU\\{ddu.MOUNT_NAME}"
+
+
+def test_save_goes_to_staging_file_not_into_the_template(fake_reg, allowed):
+    """``reg save`` пишет во временный файл, а НЕ в сам ``NTUSER.DAT``.
+
+    Регрессия к инциденту на живой машине (28.09.2026): ``reg save`` в файл,
+    из которого hive подгружен, не возвращается. Команда отработала таймаут
+    дважды подряд — удаление «зависало» на две минуты и обрывалось ошибкой,
+    а пользователь видел только «Идёт обработка — подождите…».
+    """
+    with ddu.mounted(save=True):
+        pass
+
+    save_call = next(c for c in fake_reg.calls if c[0].lower() == "save")
+    staged = Path(save_call[2])
+    assert staged != ddu.hive_path(), "reg save снова пишет в сам шаблон"
+    assert staged.name.endswith(ddu.STAGING_SUFFIX), staged
+    # Рядом с шаблоном: перенос не пересекает границу томов, иначе это уже
+    # не «перезапись файла», а «создание нового» с чужими правами.
+    assert staged.parent == ddu.hive_path().parent, staged
+
+
+def test_mutation_reaches_the_template_file(fake_reg, allowed):
+    """Правка доходит до файла шаблона — ради этого всё и затевалось.
+
+    Проверяется не вызов ``reg save``, а результат: содержимое файла шаблона
+    после операции равно сохранённому hive.
+    """
+    assert allowed.read_bytes() == b"fake", "исходное состояние заглушки"
+
+    with ddu.mounted(save=True):
+        pass
+
+    assert allowed.read_bytes() == FakeReg.SAVED, "шаблон не перезаписан"
+    assert ddu.take_save_error() == "", "успешное сохранение обязано быть чистым"
+
+
+def test_template_is_rewritten_only_after_unload(monkeypatch, allowed):
+    """Пока hive подгружен, файл шаблона не трогаем.
+
+    Файл может быть занят подгрузкой — копирование поверх занятого файла
+    упало бы с «файл занят» и потеряло бы уже сохранённый hive.
+    """
+    seen: dict[str, bytes] = {}
+
+    def run(cmd, **kwargs):
+        args = list(cmd[1:])
+        verb = args[0].lower()
+        if verb == "query":
+            return subprocess.CompletedProcess(cmd, 1, b"", b"")
+        if verb == "save":
+            Path(args[2]).write_bytes(FakeReg.SAVED)
+        elif verb == "unload":
+            seen["at_unload"] = allowed.read_bytes()
+        return subprocess.CompletedProcess(cmd, 0, b"", b"")
+
+    monkeypatch.setattr(ddu.winproc, "run_hidden", run)
+
+    with ddu.mounted(save=True):
+        pass
+
+    assert seen["at_unload"] == b"fake", "шаблон перезаписан до выгрузки hive"
+    assert allowed.read_bytes() == FakeReg.SAVED
+
+
+def test_read_only_mount_does_not_touch_the_file(fake_reg, allowed):
+    """Выгрузка ради чтения (``export_preload``) файл переписывать не должна.
+
+    Заодно это и защита от ``save=True`` по недосмотру: обратный путь
+    от выгрузки — лишняя запись в общий для машины файл шаблона.
+    """
+    with ddu.mounted():
+        pass
+    assert "save" not in fake_reg.verbs()
+
+
+def test_failed_save_still_unloads(monkeypatch, allowed):
+    """Не удалось сохранить — hive всё равно выгружается, файл не блокируется.
+
+    Возможность уйти с заблокированным ``NTUSER.DAT`` дороже потерянных
+    правок, о которых честно сказано в журнале.
+    """
+    reg = FakeReg(returncodes={"save": 1})
+    monkeypatch.setattr(ddu.winproc, "run_hidden", reg)
+
+    with ddu.mounted(save=True):
+        pass
+
+    assert reg.verbs()[-1] == "unload"
+
+
+def test_save_timeout_does_not_leave_the_hive_mounted(monkeypatch, allowed):
+    """Таймаут ``reg save`` не оставляет подгрузку висеть (FIX-37e).
+
+    Живая машина, 28.09.2026: ``reg save`` отработал таймаут, исключение
+    вылетело из ``finally`` раньше строки ``reg unload`` — и подгрузка
+    ``HKU\\_KLC_DDU`` осталась в реестре, заблокировав файл шаблона. Ошибка
+    была видна пользователю («Удаление не удалось»), а вот заблокированный
+    профиль по умолчанию — нет: чинить пришлось вручную.
+    """
+    calls: list[str] = []
+
+    def run(cmd, **kwargs):
+        args = list(cmd[1:])
+        verb = args[0].lower()
+        calls.append(verb)
+        if verb == "save":
+            raise subprocess.TimeoutExpired(cmd=cmd, timeout=60)
+        if verb == "query":
+            return subprocess.CompletedProcess(cmd, 1, b"", b"")
+        return subprocess.CompletedProcess(cmd, 0, b"", b"")
+
+    monkeypatch.setattr(ddu.winproc, "run_hidden", run)
+
+    # Исключение наружу не выходит: операция обязана завершиться отчётом.
+    with ddu.mounted(save=True):
+        pass
+
+    assert calls[-1] == "unload", "выгрузка пропущена — файл шаблона заблокирован"
+    assert ddu.take_save_error(), "о сбое сохранения должен узнать вызывающий"
+
+
+def test_failed_save_reaches_the_caller_and_spares_the_template(
+    monkeypatch, allowed
+):
+    """Сбой сохранения — это отказ, а не «в шаблоне ничего не нашлось».
+
+    Пустой список удалённых значений одинаков для обоих случаев, поэтому
+    статус идёт отдельным каналом (см. :func:`ddu.take_save_error`). Шаблон
+    при этом обязан остаться нетронутым: писать в него нечем.
+    """
+    reg = FakeReg(returncodes={"save": 1})
+    monkeypatch.setattr(ddu.winproc, "run_hidden", reg)
+
+    ddu.wipe_preload("00000409")
+
+    assert allowed.read_bytes() == b"fake", "шаблон изменён без сохранённого hive"
+    assert "reg save" in ddu.take_save_error()
+
+
+def test_empty_staging_file_is_not_written_into_the_template(monkeypatch, allowed):
+    """Пустой файл от ``reg save`` не переносится в шаблон.
+
+    Пустой шаблон хуже нетронутого: из него Windows не соберёт нормальный
+    профиль, то есть пострадало бы создание учётных записей на всей машине.
+    """
+    reg = FakeReg(saved=b"")
+    monkeypatch.setattr(ddu.winproc, "run_hidden", reg)
+
+    with ddu.mounted(save=True):
+        pass
+
+    assert allowed.read_bytes() == b"fake", "шаблон затёрт пустым файлом"
+    assert "пуст" in ddu.take_save_error()
+
+
+def test_staging_file_never_survives(monkeypatch, allowed):
+    """В каталоге профиля не остаётся мусора — ни после успеха, ни после сбоя.
+
+    ``C:\\Users\\Default`` — не рабочий каталог приложения, и лишний файл там
+    остался бы навсегда.
+    """
+    for reg in (FakeReg(), FakeReg(returncodes={"save": 1})):
+        monkeypatch.setattr(ddu.winproc, "run_hidden", reg)
+        with ddu.mounted(save=True):
+            pass
+        ddu.take_save_error()
+        assert not ddu.staging_path().exists(), f"остался {ddu.staging_path()}"
+
+
+def test_save_is_not_called_when_load_failed(monkeypatch, allowed):
+    """Не подгрузились — сохранять нечего: подгрузки не было."""
+    reg = FakeReg(returncodes={"load": 1})
+    monkeypatch.setattr(ddu.winproc, "run_hidden", reg)
+
+    with pytest.raises(ddu.DduError), ddu.mounted(save=True):
+        pass
+    assert "save" not in reg.verbs()
+
+
+def test_wipe_saves_the_template(monkeypatch, allowed):
+    """Чистка шаблона обязана завершаться ``reg save`` — иначе её нет."""
+    monkeypatch.setattr(ddu.mutate, "_clean_preload_keys", lambda *a, **k: ["x"])
+    monkeypatch.setattr(
+        ddu.mutate, "_clean_substitutes_keys", lambda *a, **k: []
+    )
+    monkeypatch.setattr(ddu.mutate, "_clean_intl_profile", lambda *a, **k: [])
+    monkeypatch.setattr(ddu.mutate, "_clean_ctf_profiles", lambda *a, **k: [])
+    monkeypatch.setattr(ddu.mutate, "_clean_branch_recursive", lambda *a, **k: [])
+    reg = FakeReg()
+    monkeypatch.setattr(ddu.winproc, "run_hidden", reg)
+
+    ddu.wipe_preload("00000409")
+
+    assert "save" in reg.verbs(), reg.verbs()
+    assert reg.verbs()[-1] == "unload", reg.verbs()
+
+
+def test_restore_saves_the_template(monkeypatch, allowed, tmp_path):
+    """Откат шаблона тоже обязан сохраниться, иначе он фиктивен."""
+    dest = tmp_path / "ddu.reg"
+    reg = FakeReg()
+    monkeypatch.setattr(ddu.winproc, "run_hidden", reg)
+
+    assert ddu.restore_preload(dest) is False, "нет файла — выгрузки не было"
+    assert reg.verbs() == [], reg.verbs()
+
+    dest.write_text("hdr", encoding="utf-16")
+    assert ddu.restore_preload(dest) is True
+    assert "save" in reg.verbs(), reg.verbs()
+    assert reg.verbs()[-1] == "unload", reg.verbs()
+
+
+def test_restore_reports_unsaved_template(monkeypatch, allowed, tmp_path):
+    """Импорт прошёл, а в файл hive не записался — это не восстановление.
+
+    Иначе откат рапортовал бы об успехе, а шаблон остался бы прежним, и US
+    вернулась бы при следующей загрузке — то есть откат не пережил бы
+    перезагрузку, ради которой он и сделан.
+    """
+    dest = tmp_path / "ddu.reg"
+    dest.write_text("hdr", encoding="utf-16")
+    reg = FakeReg(returncodes={"save": 1})
+    monkeypatch.setattr(ddu.winproc, "run_hidden", reg)
+
+    assert ddu.restore_preload(dest) is False
+    assert allowed.read_bytes() == b"fake", "шаблон изменён без сохранённого hive"
+    # Причина возвращена внутри restore_preload и в канале не остаётся: иначе
+    # она всплыла бы в отчёте следующей операции.
+    assert ddu.take_save_error() == ""
+
+
+def test_languages_value_is_cleaned_in_template(monkeypatch, allowed):
+    """Шаблон чистится и по значению ``Languages``, а не только по профилям.
+
+    Регрессия к исходному дефекту: профилей-языков (``en-US``) в шаблоне
+    нет вообще, есть только значение ``Languages`` в ``User Profile`` и
+    ``User Profile System Backup``. Из него Windows собирает ``HKU\\.DEFAULT``
+    при загрузке, поэтому чистки подключей было мало — US возвращалась.
+    """
+    calls: list[str] = []
+
+    def record_langs(root, subkey, klid, delete=True):
+        calls.append(subkey)
+        return ["x"]
+
+    def record_noop(root, subkey, klid, delete=True):
+        return []
+
+    monkeypatch.setattr(ddu.mutate, "_clean_preload_keys", record_noop)
+    monkeypatch.setattr(ddu.mutate, "_clean_substitutes_keys", record_noop)
+    monkeypatch.setattr(ddu.mutate, "_clean_intl_profile", record_noop)
+    monkeypatch.setattr(ddu.mutate, "_clean_intl_languages", record_langs)
+    monkeypatch.setattr(ddu.mutate, "_clean_ctf_profiles", lambda *a, **k: [])
+    monkeypatch.setattr(
+        ddu.mutate, "_clean_branch_recursive", lambda *a, **k: []
+    )
+    monkeypatch.setattr(
+        ddu,
+        "_reg",
+        lambda args, timeout=30: _reg_ok(args),
+    )
+
+    ddu.wipe_preload("00000409")
+
+    prefix = f"{ddu.MOUNT_NAME}\\"
+    cleaned = {sub[len(prefix):] for sub in calls if sub.startswith(prefix)}
+    for branch in (
+        r"Control Panel\International\User Profile",
+        r"Control Panel\International\User Profile System Backup",
+    ):
+        assert branch in cleaned, f" Languages не чистится в {branch}"
+
+
+
 def test_load_failure_raises_without_unload(monkeypatch, allowed):
     """Не загрузились — не выгружаемся: там была бы чужая подгрузка."""
     reg = FakeReg(returncodes={"load": 1})
@@ -194,7 +524,7 @@ def test_export_and_restore_run_reg(monkeypatch, allowed, tmp_path):
     def fake_reg_cmd(args, timeout=30):
         if args[0] == "export":
             dest.write_text("Windows Registry Editor Version 5.00", encoding="utf-16")
-        return subprocess.CompletedProcess(["reg", *args], 0, b"", b"")
+        return _reg_ok(args)
 
     monkeypatch.setattr(ddu, "_reg", fake_reg_cmd)
 
@@ -287,6 +617,28 @@ def test_delete_wipes_default_profile(monkeypatch, tmp_path, allowed):
     assert result["ddu_preload_deleted"] == ["2", "2"]
 
 
+def test_delete_is_not_successful_when_template_not_saved(
+    monkeypatch, tmp_path, allowed
+):
+    """Шаблон не записан на диск — операция неуспешна (FIX-37f).
+
+    Пользовательская ветка к этому моменту уже вычищена, так что «успех» был
+    бы ровно тем обещанием, которое инцидент и оправдал: в журнале — чистка,
+    а после перезагрузки раскладка возвращается.
+    """
+    _patch_delete_env(monkeypatch, tmp_path)
+    monkeypatch.setattr(ddu, "export_preload", lambda dest: True)
+    monkeypatch.setattr(
+        ddu.winproc, "run_hidden", FakeReg(returncodes={"save": 1})
+    )
+
+    result = cleaner.delete_layout("00000409")
+
+    assert result["ddu_save_error"], "сбой сохранения обязан попасть в отчёт"
+    assert result["success"] is False
+    assert "шаблон" in result["error"].lower(), result["error"]
+
+
 def test_delete_is_aborted_when_template_backup_fails(monkeypatch, tmp_path, allowed):
     """Сбой выгрузки шаблона отменяет удаление — fail-closed.
 
@@ -374,6 +726,67 @@ class _NoopSuspender:
 # ---------------------------------------------------------------------------
 
 
+def test_languages_are_cleaned_before_profiles(monkeypatch, allowed):
+    """В шаблоне сначала ``Languages``, потом профили (FIX-37g).
+
+    `_clean_intl_profile` решает судьбу подключа по тому, значится ли его язык
+    в ``Languages``. При обратном порядке ``en-US`` ещё числился активным, и
+    опустевший ключ ``User Profile\\en-US`` оставался в шаблоне — вместе с
+    привязкой к US-раскладке, из-за чего US возвращалась после перезагрузки.
+    """
+    order: list[str] = []
+    monkeypatch.setattr(
+        ddu.mutate,
+        "_clean_intl_languages",
+        lambda *a, **k: order.append("languages") or [],
+    )
+    monkeypatch.setattr(
+        ddu.mutate,
+        "_clean_intl_profile",
+        lambda *a, **k: order.append("profile") or [],
+    )
+    monkeypatch.setattr(
+        ddu.mutate, "_clean_preload_keys", lambda *a, **k: []
+    )
+    monkeypatch.setattr(
+        ddu.mutate, "_clean_substitutes_keys", lambda *a, **k: []
+    )
+    monkeypatch.setattr(ddu.mutate, "_clean_ctf_profiles", lambda *a, **k: [])
+    monkeypatch.setattr(
+        ddu.mutate, "_clean_branch_recursive", lambda *a, **k: []
+    )
+    monkeypatch.setattr(ddu, "_reg", lambda args, timeout=30: _reg_ok(args))
+
+    ddu.wipe_preload("00000409")
+
+    intl_branches = sum(1 for _s, mode in ddu.BRANCHES if mode == "intl")
+    assert intl_branches >= 2, "в шаблоне должно быть обе international-ветки"
+    assert order == ["languages", "profile"] * intl_branches, order
+
+
+def test_tip_in_value_name_is_matched(allowed):
+    """TIP в ИМЕНИ значения — тоже раскладка (FIX-37g).
+
+    Так Windows хранит установленные методы ввода в
+    ``Control Panel\\International\\User Profile\\<язык>``: имя значения
+    ``0409:00000409``, тип REG_DWORD, данные ``0x1``. Предикат распознавал
+    формат ``LANGID:KLID`` только в теле значения — из-за чего в шаблоне
+    профиля по умолчанию оставался ``en-US`` с привязкой к US-раскладкой, и
+    US возвращалась после каждой перезагрузки.
+    """
+    variants = mutate._klid_variants("00000409")
+
+    assert mutate._branch_value_matches("0409:00000409", "1", variants, "preload")
+    # Форма в теле значения работала и раньше — регрессия на неё.
+    assert mutate._branch_value_matches(
+        "KeyboardLayoutPreload", "0409:00000409", variants, "preload"
+    )
+    # Чужая раскладка под тем же LANGID не трогается.
+    assert not mutate._branch_value_matches(
+        "0409:00000419", "1", variants, "preload"
+    )
+
+
 def test_wipe_covers_every_branch_not_only_preload(monkeypatch, allowed):
     """Шаблон чистится целиком, а не только по Preload (главный дефект).
 
@@ -405,9 +818,7 @@ def test_wipe_covers_every_branch_not_only_preload(monkeypatch, allowed):
     monkeypatch.setattr(
         ddu,
         "_reg",
-        lambda args, timeout=30: subprocess.CompletedProcess(
-            ["reg", *args], 0, b"", b""
-        ),
+        lambda args, timeout=30: _reg_ok(args),
     )
 
     ddu.wipe_preload("00000409")

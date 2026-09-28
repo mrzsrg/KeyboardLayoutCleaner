@@ -628,14 +628,23 @@ def _branch_value_matches(
     """
     # Метаданные языкового профиля (FeaturesToInstall="000006ff" и пр.) не
     # являются раскладками — пропускаем их по имени значения (см. scanner).
-    if str(name).strip().lower() in _METADATA_VALUE_NAMES:
+    name_l = str(name).strip().lower()
+    if name_l in _METADATA_VALUE_NAMES:
         return False
     val_l = val.strip().lower()
-    # Формат "0409:00000409" (LANGID:KLID) из User Profile/CTF —
-    # сравниваем ВТОРУЮ часть (KLID), а не всю строку.
-    tip = _TIP_KLID_RE.match(val_l)
-    if tip and tip.group(1).lower() in variants:
-        return True
+    # Формат "0409:00000409" (LANGID:KLID) — сравниваем ВТОРУЮ часть
+    # (KLID), а не всю строку. Такой вид встречается в ДВУХ местах, и раньше
+    # распознавался только первый:
+    #   * в ТЕЛЕ значения (KeyboardLayoutPreload = "0409:00000409");
+    #   * в ИМЕНИ значения — так хранятся установленные методы ввода в
+    #     `Control Panel\International\User Profile\<язык>`: имя
+    #     "0409:00000409", тип REG_DWORD, данные 0x1. На живой машине из-за
+    #     этого в шаблоне профиля по умолчанию остался `en-US` с привязкой к
+    #     US-раскладке, и US возвращалась после перезагрузки (FIX-37g).
+    for token in (val_l, name_l):
+        tip = _TIP_KLID_RE.match(token)
+        if tip and tip.group(1).lower() in variants:
+            return True
     if match_mode == "substitutes":
         # Прямая ветка — hex-формы без десятичного LANGID (FIX-22). Здесь
         # Substitutes рекурсивно не обходятся, но предикат обязан совпадать
@@ -653,7 +662,7 @@ def _branch_value_matches(
         return True
     parts = [p.strip().lower() for p in val.split("\\")]
     if (
-        name.strip().lower() in variants
+        name_l in variants
         or val_l in variants
         or bool(set(parts) & variants)
     ):
@@ -926,6 +935,78 @@ def _clean_intl_profile(
 
     return deleted
 
+
+
+def _clean_intl_languages(
+    root_key: int,
+    subkey_path: str,
+    layout_klid: str,
+    delete: bool = True,
+) -> list[str]:
+    """Убрать теги языка из значения ``Languages`` (REG_MULTI_SZ).
+
+    Зачем отдельная от ``_clean_intl_profile``
+
+    ------------------------------------
+    ``_clean_intl_profile`` сознательно НЕ трогает ``Languages``: у живого
+    пользователя это его активный язык, и значение переписывает шаг
+    ``Set-WinUserLanguageList``. В шаблоне профиля по умолчанию такого
+    шага нет. Там ``Languages`` — единственный носитель языка: Windows
+    пересобирает из него ``HKU\\.DEFAULT`` при **каждой** загрузке.
+
+    Проверено дампом живого шаблона: пока в нём лежит ``en-US``, US
+    возвращается в ``HKU\\.DEFAULT\\Keyboard Layout\\Preload`` и в
+    ``...\\CTF\\SortOrder\\Language`` после каждой перезагрузки, сколько бы
+    веток ``Preload`` ни вычистили. Чистка подключей языка этого не
+    покрывает: подключа ``en-US`` в шаблоне нет вовсе, есть только
+    значение ``Languages``.
+
+    Функция узкая и вызывается **только** для шаблона — см.
+    ``ddu.wipe_preload``. Для живого пользователя она бы вырезала
+    активный язык, поэтому здесь её звать нельзя.
+
+    Returns
+    -------
+    list[str]
+        Описание изменений (при delete=False — которые БЫЛИ бы внесены).
+    """
+    tags = _klid_to_tags(layout_klid)
+    if not tags:
+        return []
+    tag_norms = {t.strip().lower() for t in tags}
+    # FIX-29: мутация требует права; при delete=False только чтение.
+    _require_mutation(delete, "_clean_intl_languages")
+    access = winreg.KEY_READ | winreg.KEY_WRITE if delete else winreg.KEY_READ
+    try:
+        with winreg.OpenKey(root_key, subkey_path, 0, access) as key:
+            try:
+                value, vtype = winreg.QueryValueEx(key, "Languages")
+            except OSError:
+                return []
+            if vtype != winreg.REG_MULTI_SZ or not isinstance(
+                value, (list, tuple)
+            ):
+                return []
+            kept = [
+                str(x) for x in value if str(x).strip().lower() not in tag_norms
+            ]
+            if len(kept) == len(value):
+                return []
+            if delete:
+                if kept:
+                    winreg.SetValueEx(
+                        key, "Languages", 0, winreg.REG_MULTI_SZ, kept
+                    )
+                else:
+                    # Пустой MULTI_SZ — мусор: значение убирается целиком.
+                    winreg.DeleteValue(key, "Languages")
+            report = f"Languages {'|'.join(map(str, value))} -> " + (
+                '|'.join(kept) if kept else "<удалено>"
+            )
+            return [report]
+    except (FileNotFoundError, PermissionError, OSError) as exc:
+        logger.debug("Languages: ветка пропущена %s: %s", subkey_path, exc)
+        return []
 
 
 # Значения-ссылки на раскладку внутри ключей TSF-профилей CTF

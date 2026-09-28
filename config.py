@@ -38,6 +38,11 @@ TIMEOUTS: dict[str, int] = {
     "reg_export": 15,  # reg export одной ветки реестра
     "reg_import": 60,  # reg import без UAC
     "reg_import_uac": 180,  # reg import с UAC (пользователь читает запрос)
+    # reg save шаблона профиля по умолчанию. Шаблон — ~256 КБ, и во временный
+    # файл (ddu.save_to_staging) он пишется за секунды: на живой машине 120 с
+    # занимал ровно этот таймаут, потому что hive писался в файл, из которого
+    # подгружен. Запас оставлен на антивирус, но не на «виснет».
+    "reg_save": 60,
     "powershell_list": 20,  # layout_cleaner_list.ps1 (скан языков)
     "powershell_backup": 45,  # layout_cleaner_backup.ps1 (снимок языков)
     "powershell_cleanup": 45,  # cleanup/sync/restore списка языков

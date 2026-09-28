@@ -1065,10 +1065,43 @@ def _wipe_ddu(result: dict[str, Any], layout_id: str) -> int:
     лежит не в загруженном hive, а в файле, и требует подгрузки. Повторяет
     тот же контракт, что и обычные ветки, — результат в отчёт, ничего при
     отсутствии прав не делает.
+
+    Статус сохранения шаблона забирается отдельно от списка удалённых
+    значений (FIX-37f): «в шаблоне ничего не нашлось» и «правки не дошли до
+    диска» выглядят снаружи одинаково, а второе означает возврат раскладки
+    после перезагрузки. Молчаливый успех здесь стоил бы инцидента.
     """
     deleted = ddu.wipe_preload(layout_id)
     result["ddu_preload_deleted"] = result.get("ddu_preload_deleted", []) + deleted
+    save_error = ddu.take_save_error()
+    if save_error:
+        result["ddu_save_error"] = save_error
+        logger.error(
+            "Шаблон профиля по умолчанию НЕ сохранён: %s - после перезагрузки "
+            "раскладка вернётся; восстановите её из бэкапа",
+            save_error,
+        )
     return len(deleted)
+
+
+def _fail_if_template_not_saved(result: dict[str, Any]) -> None:
+    """Провалить операцию, если шаблон профиля по умолчанию не записан (FIX-37f).
+
+    Пользовательская ветка к этому моменту уже вычищена, а шаблон остался
+    прежним — значит, при следующей загрузке Windows соберёт ``HKU\\.DEFAULT``
+    заново и вернёт раскладку. Молчаливый «успех» здесь означал бы ровно тот
+    инцидент, ради которого всё затевалось: в журнале — чистка, а раскладка
+    вернулась. Отдельной функцией ещё и потому, что ``delete_layout`` уже на
+    грани ограничения сложности (ruff C901).
+    """
+    if not result["ddu_save_error"] or result["error"]:
+        return
+    result["error"] = (
+        "шаблон профиля по умолчанию не сохранён на диск "
+        f"({result['ddu_save_error']}); после перезагрузки раскладка "
+        "вернётся — восстановите её из бэкапа"
+    )
+    logger.error("Удаление не завершено: %s", result["error"])
 
 
 def _backup_ddu_preload(backup_path: Path, result: dict[str, Any]) -> bool:
@@ -1204,6 +1237,10 @@ def delete_layout(layout_id: str, block_cloud_sync: bool = False) -> dict[str, A
         "ddu_preload_deleted": [],
         "ddu_backup_path": "",
         "ddu_backup_error": "",
+        # FIX-37f: не удалось записать шаблон на диск. Не пустая строка делает
+        # операцию неуспешной: без записи шаблона Windows вернёт раскладку
+        # при следующей загрузке.
+        "ddu_save_error": "",
         "hkcu_intl_deleted": [],
         "hkcu_settingsync_deleted": [],
         "ctf_profiles_deleted": [],
@@ -1417,6 +1454,10 @@ def delete_layout(layout_id: str, block_cloud_sync: bool = False) -> dict[str, A
             "После операции список языков и переключатель расходятся: %s",
             switcher_report,
         )
+
+    # FIX-37f: шаблон профиля по умолчанию не записан на диск — операция не
+    # доведена до конца, см. _fail_if_template_not_saved.
+    _fail_if_template_not_saved(result)
 
     # Успех = что-то удалено в реестре ИЛИ список языков реально очищен
     result["success"] = not result["error"] and (

@@ -385,6 +385,211 @@ class TestIntlProfileCleanup(SandboxTestCase):
 
 
 @pytest.mark.live
+class TestIntlLanguagesValue(SandboxTestCase):
+    """Шаблон профиля по умолчанию: чистка значения ``Languages``.
+
+    Отдельный класс от ``TestIntlProfileCleanup`` не по прихоти: там
+    проверяется, что активный язык у живого пользователя НЕ трогают, а
+    здесь — обратное свойство, найденное на живой машине. В шаблоне
+    профилей-языков нет вовсе, есть только значение ``Languages``, и из
+    него Windows пересобирает ``HKU\\.DEFAULT`` при каждой загрузке. Пока
+    ``en-US`` там лежит, US возвращается после перезагрузки — сколько бы
+    веток ``Preload`` ни вычистили.
+
+    Всё живёт в sandbox-ключе ``HKCU\\Software\\KeyboardCleanerTest``.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _allow_destructive(self):
+        capabilities.grant(capabilities.Capability.REGISTRY_MUTATE)
+
+    def _make_branch(self, name: str, langs: list[str]) -> str:
+        subkey = TEST_ROOT + "\\" + name
+        with winreg.CreateKeyEx(
+            winreg.HKEY_CURRENT_USER, subkey, 0, winreg.KEY_SET_VALUE
+        ) as key:
+            winreg.SetValueEx(key, "Languages", 0, winreg.REG_MULTI_SZ, langs)
+        return subkey
+
+    @staticmethod
+    def _languages(subkey: str):
+        try:
+            with winreg.OpenKey(
+                winreg.HKEY_CURRENT_USER, subkey, 0, winreg.KEY_READ
+            ) as key:
+                return list(winreg.QueryValueEx(key, "Languages")[0])
+        except FileNotFoundError:
+            return None
+
+    def test_removes_only_target_tag(self) -> None:
+        """ru остаётся, en-US вырезается — порядок и прочие языки целы."""
+        subkey = self._make_branch("LanguagesMixed", ["ru", "en-US"])
+
+        deleted = mutate._clean_intl_languages(
+            winreg.HKEY_CURRENT_USER, subkey, "00000409"
+        )
+
+        assert deleted, "изменение должно быть описано в отчёте"
+        assert self._languages(subkey) == ["ru"]
+
+    def test_removes_value_when_no_languages_left(self) -> None:
+        """Остался только en-US: значение удаляется целиком, а не пустеет.
+
+        Пустой REG_MULTI_SZ — это мусор в общем для машины шаблоне; при
+        ``User Profile System Backup`` так и было: в нём лежал один
+        ``en-US``, из которого Windows и собирала Preload по умолчанию.
+        """
+        subkey = self._make_branch("LanguagesOnly", ["en-US"])
+
+        mutate._clean_intl_languages(winreg.HKEY_CURRENT_USER, subkey, "00000409")
+
+        assert self._languages(subkey) is None
+
+    def test_dry_run_does_not_modify(self) -> None:
+        subkey = self._make_branch("LanguagesDry", ["ru", "en-US"])
+
+        deleted = mutate._clean_intl_languages(
+            winreg.HKEY_CURRENT_USER, subkey, "00000409", delete=False
+        )
+
+        assert deleted, "dry-run обязан сообщать, что изменил бы"
+        assert self._languages(subkey) == ["ru", "en-US"]
+
+    def test_unknown_klid_is_noop(self) -> None:
+        subkey = self._make_branch("LanguagesUnknown", ["ru", "en-US"])
+
+        assert (
+            mutate._clean_intl_languages(
+                winreg.HKEY_CURRENT_USER, subkey, "d001dead"
+            )
+            == []
+        )
+        assert self._languages(subkey) == ["ru", "en-US"]
+
+    def test_missing_branch_is_noop(self) -> None:
+        assert (
+            mutate._clean_intl_languages(
+                winreg.HKEY_CURRENT_USER,
+                TEST_ROOT + "\\LanguagesAbsent",
+                "00000409",
+            )
+            == []
+        )
+
+
+@pytest.mark.live
+class TestIntlProfileInputMethodBinding(SandboxTestCase):
+    """Шаблон профиля: привязка метода ввода живёт в ИМЕНИ значения.
+
+    Живая машина, 28.09.2026 (FIX-37g): в
+    ``C:\\Users\\Default\\NTUSER.DAT`` подключ ``User Profile\\en-US`` содержал
+    значение с ИМЕНЕМ ``0409:00000409`` (тип REG_DWORD, данные ``0x1``) — так
+    Windows хранит установленные методы ввода. Предикат распознавал формат
+    ``LANGID:KLID`` только в ТЕЛЕ значения, поэтому такая привязка не
+    совпадала ни при плане, ни при удалении: чистка проходила «в ноль», а US
+    возвращалась после перезагрузки — вместе с ``en-US`` в шаблоне.
+
+    Здесь структура воспроизводится один в один.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _allow_destructive(self):
+        capabilities.grant(capabilities.Capability.REGISTRY_MUTATE)
+
+    @staticmethod
+    def _make_profile_branch(
+        name: str, langs: list[str], extra_layout: bool = True
+    ) -> str:
+        """Ветка ``User Profile`` ровно как в живом шаблоне.
+
+        ``extra_layout=False`` — профиль, где US-раскладка ЕДИНСТВЕННАЯ:
+        опустевший после чистки ключ тогда удаляется целиком. С чужой
+        раскладкой внутри (``extra_layout=True``, значение по умолчанию) ключ
+        остаётся — и это правильно: удалять нечего, профиль ещё живой.
+
+        Возвращает путь от sandbox-корня: helpers модуля (``_get_test_value``,
+        ``_key_exists``) добавляют ``TEST_ROOT`` сами.
+        """
+        with winreg.CreateKeyEx(
+            winreg.HKEY_CURRENT_USER,
+            TEST_ROOT + "\\" + name,
+            0,
+            winreg.KEY_SET_VALUE,
+        ) as key:
+            winreg.SetValueEx(key, "Languages", 0, winreg.REG_MULTI_SZ, langs)
+        with winreg.CreateKeyEx(
+            winreg.HKEY_CURRENT_USER,
+            TEST_ROOT + "\\" + name + "\\en-US",
+            0,
+            winreg.KEY_SET_VALUE,
+        ) as key:
+            # ИМЯ значения — TIP, данные — флаг установки.
+            winreg.SetValueEx(key, "0409:00000409", 0, winreg.REG_DWORD, 1)
+            if extra_layout:
+                winreg.SetValueEx(key, "0409:00000419", 0, winreg.REG_DWORD, 1)
+        return name
+
+    @staticmethod
+    def _binding(name: str, value_name: str):
+        return _get_test_value(name + "\\en-US", value_name)
+
+    def test_tip_named_binding_is_removed(self) -> None:
+        """Значение с именем ``0409:00000409`` — это раскладка, а не мусор."""
+        name = self._make_profile_branch("UserProfile", ["ru", "en-US"])
+
+        deleted = mutate._clean_intl_profile(
+            winreg.HKEY_CURRENT_USER, TEST_ROOT + "\\" + name, "00000409"
+        )
+
+        assert deleted, "привязка US не удалена — шаблон сохранит US"
+        assert self._binding(name, "0409:00000409") is None
+        # Чужая раскладка того же языка не тронута.
+        assert self._binding(name, "0409:00000419") == 1
+
+    def test_dry_run_reports_tip_named_binding(self) -> None:
+        """План обязан видеть то же, что удаление (иначе ложный дрейф)."""
+        name = self._make_profile_branch("UserProfilePlan", ["ru", "en-US"])
+
+        deleted = mutate._clean_intl_profile(
+            winreg.HKEY_CURRENT_USER, TEST_ROOT + "\\" + name, "00000409", delete=False
+        )
+
+        assert deleted
+        assert self._binding(name, "0409:00000409") == 1
+
+    def test_profile_key_is_removed_after_languages_cleanup(self) -> None:
+        """Порядок шаблона: сначала ``Languages``, потом профиль.
+
+        Пока ``en-US`` значится в ``Languages``, профиль считается активным и
+        сохраняется — даже пустым. В шаблоне это значит оставшийся ``en-US``
+        с привязкой к US. Сначала вычищаем список языков, потом профиль.
+        """
+        name = self._make_profile_branch(
+            "UserProfileOrder", ["ru", "en-US"], extra_layout=False
+        )
+        path = TEST_ROOT + "\\" + name
+
+        mutate._clean_intl_languages(winreg.HKEY_CURRENT_USER, path, "00000409")
+        mutate._clean_intl_profile(winreg.HKEY_CURRENT_USER, path, "00000409")
+
+        assert not _key_exists(name + "\\en-US"), (
+            "пустой подключ en-US остался в шаблоне"
+        )
+
+    def test_backup_branch_is_cleaned_the_same_way(self) -> None:
+        """``User Profile System Backup`` — вторая ветка, правила те же."""
+        name = self._make_profile_branch(
+            "UserProfileBackup", ["en-US"], extra_layout=False
+        )
+        path = TEST_ROOT + "\\" + name
+
+        mutate._clean_intl_languages(winreg.HKEY_CURRENT_USER, path, "00000409")
+        mutate._clean_intl_profile(winreg.HKEY_CURRENT_USER, path, "00000409")
+
+        assert not _key_exists(name + "\\en-US")
+
+
+@pytest.mark.live
 class TestScannerDeepScan(SandboxTestCase):
     """Рекурсивный скан CTF/User Profile + нормализация регистра Substitutes."""
 

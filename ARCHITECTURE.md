@@ -141,7 +141,7 @@ keyboard-layout-cleaner/
 | `HKCU\Software\Microsoft\CTF` | ✅ | ✅ | ✅ | SECONDARY: TSF-профили (decimal-HKL), очистка с остановкой ctfmon |
 | `HKCU\...\SettingSync\Namespace\Language` | ✅ | ✅ | ✅ | SECONDARY |
 | `HKU\.DEFAULT\Keyboard Layout\Preload` | ✅ | ✅ | ✅ (Admin) | SECONDARY: раскладка до логина |
-| `C:\Users\Default\NTUSER.DAT` → `Keyboard Layout\Preload` | ✅ | ✅ | ✅ (Admin) | FIX-37: источник, из которого Windows пересобирает `HKU\.DEFAULT` при загрузке; без чистки удаление отменяется перезагрузкой. Правка ровно одной ветки через `reg load`/`reg unload` (`ddu.py`) |
+| `C:\Users\Default\NTUSER.DAT` → 5 веток (`Preload`, `Substitutes`, `…\User Profile`, `…\User Profile System Backup`, `Software\Microsoft\CTF`) | ✅ | ✅ | ✅ (Admin) | FIX-37: источник, из которого Windows пересобирает `HKU\.DEFAULT` при загрузке; без чистки удаление отменяется перезагрузкой. В шаблоне носитель языка — сразу три вещи: значение `Languages`, ключи профилей с привязками методов ввода (значения, **имя** которых равно TIP `0409:00000409`, FIX-37g) и нумерация CTF; порядок обязателен — `Languages` → профили. Правка: `reg load` → правка → **`reg save` во временный файл** → `reg unload` → перезапись шаблона (`ddu.py`). Без `reg save` выгрузка отбрасывает правки; `reg save` **в сам шаблон** не возвращается и вешает операцию (FIX-37e); сбой сохранения обязан провалить удаление, а не остаться в журнале (FIX-37f) |
 | `HKEY_USERS\<SID>` других пользователей | — | — | — | out of scope by design: hives могут быть не загружены, правки перетираются активной сессией |
 | `HKLM\SYSTEM\...\Keyboard Layouts` | ✅ | ✅ (имена) | ❌ никогда | CATALOG: наличие в каталоге ≠ установлена у пользователя; справочник имён `LAYOUT_MAP` |
 

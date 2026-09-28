@@ -38,6 +38,7 @@ import winreg
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import capabilities
 import config
 import mutate
 import winapi
@@ -122,7 +123,13 @@ def mounted() -> Iterator[None]:
     Имя подгрузки занято — сначала пробуем выгрузить: ``_KLC_DDU`` зарезервирован
     за этим модулем, и оставшийся после сбоя процессов mount принадлежит нам
     же. Чужие подгрузки не трогаем: там другое имя.
+
+    Право ``REGISTRY_MUTATE`` требуется здесь же (FIX-29), а не только внутри
+    ``mutate._clean_preload_keys``: подгрузка hive и ``reg import`` сами по
+    себе разрушительны, и защита обязана стоять там, где операция, а не там,
+    где её когда-то позвали.
     """
+    capabilities.require(capabilities.Capability.REGISTRY_MUTATE, "ddu.mounted")
     if _is_mounted():
         logger.warning(
             "Подгрузка %s уже была в реестре (вероятно, осталась после сбоя) "

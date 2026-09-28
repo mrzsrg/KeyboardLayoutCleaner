@@ -9,6 +9,7 @@ from typing import ClassVar
 
 import pytest
 
+import capabilities
 import cleaner
 import ddu
 
@@ -47,12 +48,23 @@ def fake_reg(monkeypatch):
 
 @pytest.fixture
 def allowed(monkeypatch, tmp_path):
-    """Снять все запреты и подсунуть файл-заглушку шаблона."""
+    """Снять все запреты, выдать право на мутацию и подсунуть файл-заглушку.
+
+    Право выдаётся явно: autouse-фикстура ``_no_capabilities_by_default``
+    отзывает его перед каждым тестом, и тест обязан объявить, что пишет в
+    реестр (FIX-29). Иначе новый модуль можно забыть закрыть — и это будет
+    видно только по сломанной раскладке у человека.
+
+    ``capabilities.granted`` — контекстный менеджер, а не прямая выдача,
+    поэтому здесь именно ``grant``: фикстура должна оставить право на весь
+    тест, а не на время ``with``.
+    """
     hive = tmp_path / "NTUSER.DAT"
     hive.write_bytes(b"fake")
     monkeypatch.setenv("KLC_DDU_HIVE", str(hive))
     monkeypatch.setattr(ddu.winapi, "is_user_an_admin", lambda: True)
     monkeypatch.setattr(ddu.config, "is_sandbox_enabled", lambda: False)
+    capabilities.grant(capabilities.Capability.REGISTRY_MUTATE)
     return hive
 
 
@@ -95,6 +107,31 @@ def test_missing_hive_file_is_reported(monkeypatch, tmp_path):
 # ---------------------------------------------------------------------------
 # Выгрузка hive: главное свойство — она обязана происходить
 # ---------------------------------------------------------------------------
+
+
+def test_mount_denied_without_capability(monkeypatch, tmp_path):
+    """Без права модель защиты обязана остановить подгрузку hive.
+
+    Ровно тот класс, что стоил пользователю русской раскладки: операция
+    проходит там, где её не ждали. Барьер обязан стоять ВНУТРИ функции
+    (FIX-29), иначе достаточно забыть подмену в новом тесте.
+    """
+    hive = tmp_path / "NTUSER.DAT"
+    hive.write_bytes(b"fake")
+    monkeypatch.setenv("KLC_DDU_HIVE", str(hive))
+    monkeypatch.setattr(ddu.winapi, "is_user_an_admin", lambda: True)
+    monkeypatch.setattr(ddu.config, "is_sandbox_enabled", lambda: False)
+    calls: list[str] = []
+
+    def run(cmd, **kwargs):
+        calls.append(cmd[1])
+        return subprocess.CompletedProcess(cmd, 0, b"", b"")
+
+    monkeypatch.setattr(ddu.winproc, "run_hidden", run)
+
+    with pytest.raises(capabilities.CapabilityDeniedError), ddu.mounted():
+        pass
+    assert calls == [], "reg.exe не должен вызываться без права"
 
 
 def test_hive_is_unloaded_after_success(fake_reg, allowed):

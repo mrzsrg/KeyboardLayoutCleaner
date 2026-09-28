@@ -1118,3 +1118,53 @@ class TestScanCleanParity:
         FIX-10 (шаг 2): предикаты сопоставления живут в mutate.
         """
         assert scanner._METADATA_VALUE_NAMES is mutate._METADATA_VALUE_NAMES
+
+
+
+class TestCleanupScriptTagBarrier:
+    """FIX-37i: разбор отказа PS-скрипта на стороне Python.
+
+    Скрипт останавливается fail-closed и печатает `INVALID_TAG`, но `exit 1`
+    из вызванного скрипта не всегда доходит до кода процесса. Если разбирать
+    только `returncode`, пользователь увидит «returncode=1» без причины, и
+    (что важнее) отчёт не отличит отказ барьера от сбоя PowerShell.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _allow(self):
+        import capabilities
+
+        capabilities.grant(capabilities.Capability.LANGUAGE_LIST)
+
+    def test_invalid_tag_is_reported_with_its_reason(self, monkeypatch):
+        import langlist
+
+        def fake_run(cmd, **kw):
+            return mock.Mock(
+                returncode=1, stdout="INVALID_TAG: ru en-US\n", stderr=""
+            )
+
+        monkeypatch.setattr(langlist, "run_hidden", fake_run)
+
+        ok, detail, plan = langlist._run_cleanup_script("00000409", apply=True)
+
+        assert ok is False
+        assert "INVALID_TAG" in detail
+        assert "ru en-US" in detail
+        assert plan == {"tips_removed": [], "languages_removed": []}
+
+    def test_invalid_tag_wins_over_returncode_only(self, monkeypatch):
+        """Тот же отказ при returncode=0 - барьер виден по stdout."""
+        import langlist
+
+        def fake_run(cmd, **kw):
+            return mock.Mock(
+                returncode=0, stdout="INVALID_TAG: ru en-US\n", stderr=""
+            )
+
+        monkeypatch.setattr(langlist, "run_hidden", fake_run)
+
+        ok, detail, _plan = langlist._run_cleanup_script("00000409", apply=False)
+
+        assert ok is False
+        assert "INVALID_TAG" in detail

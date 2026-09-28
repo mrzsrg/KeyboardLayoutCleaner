@@ -1357,6 +1357,35 @@ class TestLanguageListSandboxIsolation:
         langlist._run_cleanup_script("d001dead", apply=True)
         assert "-Sandbox" in captured["cmd"]
 
+    def test_cleanup_passes_language_tags(self, monkeypatch):
+        """FIX-37i: скрипт получает BCP-47-теги языка удаляемой раскладки.
+
+        Без них PS-шаг умеет убрать только раскладку, а язык, у которого
+        методов ввода не осталось, навсегда остаётся в списке - именно так
+        «Английский (США)» и жил в Параметрах после успешного удаления US.
+        """
+        import langlist
+
+        captured = self._cmd(monkeypatch, False)
+        langlist._run_cleanup_script("00000409", apply=True)
+
+        cmd = captured["cmd"]
+        assert "-LanguageTags" in cmd
+        assert cmd[cmd.index("-LanguageTags") + 1] == "en-US"
+
+    def test_cleanup_omits_language_tags_for_unknown_klid(self, monkeypatch):
+        """KLID вне таблицы: тегов нет, скрипт работает в прежнем режиме.
+
+        Пустой набор тегов - это «языки не трогаем», а не «убери язык с
+        любым тегом»: иначе неизвестная раскладка вычищала бы чужие языки.
+        """
+        import langlist
+
+        captured = self._cmd(monkeypatch, False)
+        langlist._run_cleanup_script("d001dead", apply=True)
+
+        assert "-LanguageTags" not in captured["cmd"]
+
     def test_sync_passes_sandbox_flag(self, monkeypatch):
         import langlist
 

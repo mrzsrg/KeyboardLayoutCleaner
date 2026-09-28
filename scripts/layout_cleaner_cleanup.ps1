@@ -5,6 +5,7 @@
 # Запускается из cleaner.py через subprocess.run с параметрами:
 #   -LayoutKlid <8-символьный HEX KLID>
 #   [-CjkMapJson <путь к JSON-файлу с картой CJK>]  # см. ниже
+#   [-LanguageTags <BCP-47-теги языка удаляемой раскладки через запятую>]  # FIX-37i
 #   [-Apply]  # если нет — только dry-run (план изменений)
 #
 # Вывод (в stdout):
@@ -13,6 +14,8 @@
 #   NOCHANGE — ничего не изменено
 #   DRYRUN — план готов, изменения НЕ применены
 #   EMPTY_SKIPPED — нельзя удалить все языки
+#   INVALID_TAG: <тег> — некорректный BCP-47-тег в -LanguageTags, WinRT-API
+#     НЕ вызывался (fail-closed)
 #   SUCCESS — изменения применены
 
 param(
@@ -25,6 +28,20 @@ param(
     [string]$CjkMapJson,
 
     [switch]$Apply,
+
+    # FIX-37i: BCP-47-теги языка удаляемой раскладки через запятую
+    # (например "en-US"). Приходят из layout_ids.klid_to_tags() — того же
+    # единственного источника, что и карта CJK (FIX-8).
+    #
+    # Зачем: язык может остаться в списке БЕЗ единого метода ввода
+    # (осиротеть). Прежний скрипт умел убрать язык только если убрал его
+    # раскладку в этом же прогоне, поэтому на осиротевшем языке отвечал
+    # NOCHANGE, и Windows продолжал показывать его в «Предпочитаемых
+    # языках» (живой прогон 28.09.2026: en-US с InputMethodTips=[]).
+    # Теги ограничивают уборку ТОЛЬКО языком удаляемой раскладки: чужие
+    # языки без раскладок (например, добавленные ради проверки орфографии)
+    # не трогаются.
+    [string]$LanguageTags,
 
     # FIX-25: песочница. Реестр изолирован, но Set-WinUserLanguageList —
     # WinRT-API, минующий реестр, и песочницей НЕ изолируется. Флаг
@@ -45,6 +62,25 @@ try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch { }
 if ($LayoutKlid -notmatch '^[0-9a-fA-F]{8}$') {
     Write-Output "INVALID_KLID: $LayoutKlid"
     exit 1
+}
+
+# FIX-37i: языки, которые умеем убирать целиком, — по BCP-47-тегам из
+# -LanguageTags. Практическая форма тега та же, что в restore.ps1: пробел
+# или склейка нескольких тегов сюда не попадает. Валидация fail-closed и
+# ДО любой работы со списком: кривой тег не должен доехать до WinRT-API,
+# который заменяет список целиком.
+$TagPattern = '^[a-zA-Z]{2,3}(-[a-zA-Z0-9]{2,8})*$'
+$targetTags = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+if ($LanguageTags) {
+    foreach ($raw in ($LanguageTags -split ',')) {
+        $candidate = $raw.Trim()
+        if (-not $candidate) { continue }
+        if ($candidate -notmatch $TagPattern) {
+            Write-Output "INVALID_TAG: $candidate"
+            exit 1
+        }
+        [void]$targetTags.Add($candidate)
+    }
 }
 
 # CJK-раскладки: InputMethodTips хранят GUID вместо KLID, поэтому нужен
@@ -84,7 +120,14 @@ $changed = $false
 $kept = New-Object System.Collections.Generic.List[object]
 $report = New-Object System.Collections.Generic.List[string]
 
-foreach ($l in $langs) {
+# FIX-37i: индекс нужен для защиты языка интерфейса — первый элемент списка
+# и есть язык интерфейса, а Set-WinUserLanguageList делает интерфейсным тот,
+# что останется первым. Удалять его вместе с раскладкой значит молча сменить
+# язык интерфейса, чего удаление раскладки не обещает. Windows и сам
+# оставляет язык, из которого убрали последнюю раскладку, если он интерфейсный.
+for ($i = 0; $i -lt $langs.Count; $i++) {
+    $l = $langs[$i]
+    $isDisplay = ($i -eq 0)
     $tag = $l.LanguageTag
     $tips = @($l.InputMethodTips)
     $dropTips = @()
@@ -108,6 +151,7 @@ foreach ($l in $langs) {
         }
     }
 
+    $removeLang = $false
     if ($dropTips.Count -gt 0) {
         $changed = $true
         # Свойство InputMethodTips у WinUserLanguage ТОЛЬКО ДЛЯ ЧТЕНИЯ
@@ -120,13 +164,25 @@ foreach ($l in $langs) {
         }
         $l.InputMethodTips.Clear()
         foreach ($t in $keptTips) { [void]$l.InputMethodTips.Add($t) }
-        if ($keptTips.Count -eq 0) {
-            $report.Add('REMOVELANG|' + $tag)
-        } else {
+        $removeLang = ($keptTips.Count -eq 0) -and -not $isDisplay
+        if (-not $removeLang) {
             $kept.Add($l)
         }
+    } elseif ($tips.Count -eq 0 -and $targetTags.Contains($tag) -and -not $isDisplay) {
+        # FIX-37i: ОСИРОТЕВШИЙ язык удаляемой раскладки. Его подсказки уже
+        # вычищены реестровым шагом (Control Panel\International\User
+        # Profile\<tag>), поэтому $dropTips пуст и прежний код сюда не
+        # доходил: скрипт отвечал NOCHANGE, а язык оставался в списке
+        # навсегда — Windows продолжал показывать его в «Предпочитаемых
+        # языках» (живой прогон 28.09.2026: en-US, InputMethodTips=[]).
+        $changed = $true
+        $removeLang = $true
     } else {
         $kept.Add($l)
+    }
+
+    if ($removeLang) {
+        $report.Add('REMOVELANG|' + $tag)
     }
 }
 

@@ -137,7 +137,7 @@ keyboard-layout-cleaner/
 | `HKCU\Keyboard Layout\Preload` | ✅ | ✅ | ✅ | PRIMARY: прямые записи KLID |
 | `HKCU\Keyboard Layout\Substitutes` | ✅ | ✅ | ✅ | PRIMARY: подмены KLID→KLID |
 | `HKCU\Control Panel\International\User Profile` | ✅ | ✅ | ✅ | PRIMARY: BCP-47-теги + InputMethodOverride/KLP; значения-метаданные (`FeaturesToInstall` и др.) KLID-кандидатами не считаются (регрессия 000006ff) |
-| Языковой список (WinRT `Get-/Set-WinUserLanguageList`) | ✅ | ✅ | ⚠️ PowerShell-API **+ реестр** (FIX-37h) | FIX-37h: значение `Languages` и профиль языка правятся и напрямую, когда в `Preload` не осталось других раскладок этого языка. Порядок обязателен: PowerShell-шаг идёт **до** чистки веток, иначе `Get-WinUserLanguageList` не видит подключённых методов ввода и отвечает `NOCHANGE` |
+| Языковой список (WinRT `Get-/Set-WinUserLanguageList`) | ✅ | ✅ | ⚠️ PowerShell-API **+ реестр** (FIX-37h, FIX-37i) | FIX-37h: значение `Languages` и профиль языка правятся и напрямую, когда в `Preload` не осталось других раскладок этого языка. Порядок обязателен: PowerShell-шаг идёт **до** чистки веток, иначе `Get-WinUserLanguageList` не видит подключённых методов ввода и отвечает `NOCHANGE`. FIX-37i: шаг получает BCP-47-теги удаляемой раскладки (`-LanguageTags`) и убирает **язык**, оставшийся без методов ввода, — иначе он навсегда висит в «Предпочитаемых языках» (живой прогон: `en-US`, `InputMethodTips=[]`). Язык интерфейса (первый элемент списка) не удаляется никогда |
 | `HKCU\Software\Microsoft\CTF` | ✅ | ✅ | ✅ | SECONDARY: TSF-профили (decimal-HKL), очистка с остановкой ctfmon |
 | `HKCU\...\SettingSync\Namespace\Language` | ✅ | ✅ | ✅ | SECONDARY |
 | `HKU\.DEFAULT\Keyboard Layout\Preload` | ✅ | ✅ | ✅ (Admin) | SECONDARY: раскладка до логина |

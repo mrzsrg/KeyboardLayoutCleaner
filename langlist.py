@@ -84,6 +84,31 @@ def _write_cjk_map_file() -> str:
 
 
 
+def _cleanup_refusal(output: str) -> str:
+    """Причина, по которой скрипт отказался работать (пусто - отказа нет).
+
+    Два отказа, оба fail-closed, оба читаются из stdout ДО проверки кода
+    возврата:
+
+    * ``INVALID_TAG`` (FIX-37i) - некорректный BCP-47-тег в ``-LanguageTags``.
+      ``exit 1`` из вызванного скрипта не всегда доходит до кода процесса,
+      поэтому по ``returncode`` этот отказ не виден вовсе, а пользователь
+      получил бы «returncode=1» без причины;
+    * ``EMPTY_SKIPPED`` - список языков нельзя опустошить полностью.
+
+    Отдельная функция, а не ветки внутри :func:`_run_cleanup_script`: разбор
+    вывода и так стоит на пороге сложности, а у каждого отказа свой смысл и
+    свои тесты.
+    """
+    for line in output.splitlines():
+        if line.startswith("INVALID_TAG"):
+            return f"{line.strip()} (список языков не изменён)"
+    if "EMPTY_SKIPPED" in output:
+        return "EMPTY_SKIPPED: список языков нельзя опустошить полностью"
+    return ""
+
+
+
 def _run_cleanup_script(
     layout_klid: str, apply: bool = True
 ) -> tuple[bool, str, dict[str, list[str]]]:
@@ -120,6 +145,17 @@ def _run_cleanup_script(
         "-CjkMapJson",
         cjk_map_path,
     ]
+    # FIX-37i: BCP-47-теги языка удаляемой раскладки. Без них скрипт умеет
+    # убрать только раскладку, а язык, у которого методов ввода не осталось
+    # (осиротевший), продолжает висеть в «Предпочитаемых языках» — по
+    # живой машине именно так и выглядело удаление US: раскладки нет, а
+    # «Английский (США)» в Параметрах остаётся. Теги берём из layout_ids
+    # (единственный источник, FIX-8) и передаём параметром, а не склейкой
+    # в строку команды. Пустой набор (KLID вне таблицы) означает прежнее
+    # поведение: убираем раскладки, языки не трогаем.
+    language_tags = sorted(layout_ids.klid_to_tags(layout_klid))
+    if language_tags:
+        cmd += ["-LanguageTags", ",".join(language_tags)]
     # FIX-25: песочница. Реестр она изолирует, а Set-WinUserLanguageList —
     # WinRT-API, минующий реестр. Флаг запрещает вызов на стороне скрипта:
     # защита не зависит от того, какой путь к нему зайдёт.
@@ -151,6 +187,13 @@ def _run_cleanup_script(
             os.unlink(cjk_map_path)
 
     output = result.stdout or ""
+    # Отказ скрипта разбираем ДО кода возврата: оба маркера означают, что
+    # список языков не тронут, и оба несут причину, которой нет в stderr.
+    refusal = _cleanup_refusal(output)
+    if refusal:
+        logger.warning("PS-очистка: %s", refusal)
+        return False, refusal, _parse_ps_plan(output)
+
     if result.returncode != 0:
         stderr_tail = (result.stderr or "").strip()[-300:]
         if stderr_tail:
@@ -170,10 +213,6 @@ def _run_cleanup_script(
         # FIX-25: песочница. Не ошибка и не применение — план доехал до
         # конца, но реальный список языков не тронут.
         ok, detail = True, "SANDBOX_SKIPPED"
-    elif "EMPTY_SKIPPED" in output:
-        detail = "EMPTY_SKIPPED: список языков нельзя опустошить полностью"
-        logger.warning("PS-очистка: %s", detail)
-        return False, detail, _parse_ps_plan(output)
     else:
         detail = f"неожиданный вывод PowerShell: {output.strip()[:200]}"
         logger.warning("PS-очистка: %s", detail)

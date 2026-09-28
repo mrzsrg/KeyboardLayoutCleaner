@@ -10,6 +10,7 @@ test_release_hashes.py — регрессии автоматической пу�
 
 import hashlib
 import importlib.util
+import json
 import os
 import subprocess
 import sys
@@ -132,6 +133,62 @@ class TestCliEncoding:
         """Повторный вызов не ломает уже перенастроенный поток."""
         rh._force_utf8_output()
         rh._force_utf8_output()
+
+    def test_notes_reads_cyrillic_body_under_cp1252(self, tmp_path):
+        """Описание релиза на русском должно читаться под cp1252.
+
+        Второй баг того же класса, пойманный следом: ``gh`` возвращает
+        описание релиза с русским текстом, а ``text=True`` без явной
+        кодировки декодировал его в локаль процесса. Падение происходило в
+        потоке-читателе subprocess, и наружу выходило
+        ``AttributeError: 'NoneType' object has no attribute 'rstrip'`` —
+        сообщение, не указывающее на настоящую причину.
+        """
+        fake_gh = tmp_path / "fake_gh.py"
+        fake_gh.write_text(
+            "import sys\n"
+            "if 'view' in sys.argv:\n"
+            "    sys.stdout.reconfigure(encoding='utf-8')\n"
+            "    print('## Что изменилось')\n"
+            "    print()\n"
+            "    print('Одна строка = одна раскладка.')\n",
+            encoding="utf-8",
+        )
+        table = tmp_path / "table.md"
+        table.write_text(
+            f"{rh.BEGIN}\n\n| Файл | Размер | SHA256 |\n"
+            "| --- | --- | --- |\n"
+            "| `portable.zip` | 1 000 байт | `ABC` |\n\n" + rh.END + "\n",
+            encoding="utf-8",
+        )
+        notes_file = tmp_path / "notes.md"
+        env = {
+            **os.environ,
+            "PYTHONIOENCODING": "cp1252",
+            "KLC_GH": sys.executable,
+            "KLC_GH_ARGS": json.dumps([str(fake_gh)]),
+        }
+
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(ROOT / "scripts" / "release_hashes.py"),
+                "notes",
+                "--tag", "v1.2.0",
+                "--table", str(table),
+                "--notes-file", str(notes_file),
+            ],
+            capture_output=True,
+            env=env,
+            timeout=120,
+            check=False,
+        )
+
+        assert result.returncode == 0, result.stderr.decode("utf-8", "replace")
+        written = notes_file.read_text(encoding="utf-8")
+        # Русский текст описания не потерялся и таблица в него вставлена
+        assert "Одна строка = одна раскладка." in written
+        assert "| `portable.zip` |" in written
 
 
 class TestRenderAndReplace:

@@ -40,6 +40,8 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import json
+import os
 import subprocess
 import sys
 import zipfile
@@ -174,13 +176,36 @@ def cmd_readme(args: argparse.Namespace) -> int:
     return 0
 
 
+#: Команда ``gh``. Переопределяется переменными KLC_GH / KLC_GH_ARGS —
+#: единственный способ проверить декодирование вывода gh без настоящего
+#: GitHub (тест подставляет python со своим скриптом). KLC_GH_ARGS — JSON
+#:-массив аргументов: shlex на Windows срезает обратные слэши в пути.
+GH_EXE = os.environ.get("KLC_GH") or "gh"
+GH_ARGS = json.loads(os.environ.get("KLC_GH_ARGS") or "[]")
+
+
 def _gh(*args: str) -> str:
-    """Вызвать gh CLI и вернуть stdout; ошибка — исключение с текстом."""
-    result = subprocess.run(["gh", *args], capture_output=True, text=True, check=False)
+    """Вызвать gh CLI и вернуть stdout; ошибка — исключение с текстом.
+
+    Кодировка задана ЯВНО (FIX-35). ``text=True`` без ``encoding`` декодирует
+    вывод дочернего процесса в локаль процесса, а на раннере это cp1252.
+    Описание релиза содержит русский текст, и декодирование падало в
+    ``UnicodeDecodeError`` внутри потока-читателя subprocess, из-за чего
+    ``result.stdout`` оказывался ``None`` и шаг завершался
+    ``AttributeError`` — с сообщением, не указывающим на настоящую причину.
+    """
+    result = subprocess.run(
+        [GH_EXE, *GH_ARGS, *args],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+    )
     if result.returncode != 0:
-        message = (result.stderr or result.stdout).strip()
+        message = (result.stderr or result.stdout or "").strip()
         raise RuntimeError(f"gh {' '.join(args)}: {message}")
-    return result.stdout
+    return result.stdout or ""
 
 
 def cmd_notes(args: argparse.Namespace) -> int:

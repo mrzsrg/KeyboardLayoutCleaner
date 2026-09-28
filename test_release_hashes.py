@@ -10,6 +10,9 @@ test_release_hashes.py — регрессии автоматической пу�
 
 import hashlib
 import importlib.util
+import os
+import subprocess
+import sys
 import zipfile
 from pathlib import Path
 
@@ -86,9 +89,53 @@ class TestCollect:
         assert rows[0][2] == hashlib.sha256(b"just a file").hexdigest()
 
 
+class TestCliEncoding:
+    """Скрипт запускается процессом, а не импортом — это другая среда.
+
+    Регрессия FIX-35, пойманная на первом же реальном релизе: шаг
+    ``compute`` печатает таблицу с русскими подписями, кодировка консоли
+    на раннере — cp1252, и печать падала UnicodeEncodeError уже после того,
+    как хеши посчитаны. Релиз остался без архива и без хешей.
+
+    Все прочие тесты файла вызывают функции напрямую, где вывод
+    перехватывает pytest, — поэтому условие воспроизводится здесь и
+    только здесь: запуск настоящего подпроцесса.
+    """
+
+    def test_compute_survives_cp1252_console(self, tmp_path):
+        archive = tmp_path / "portable.zip"
+        _make_zip(archive)
+        out = tmp_path / "table.md"
+        env = {**os.environ, "PYTHONIOENCODING": "cp1252"}
+
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(ROOT / "scripts" / "release_hashes.py"),
+                "compute",
+                "--archive", str(archive),
+                "--tag", "v1.2.0",
+                "--out", str(out),
+            ],
+            capture_output=True,
+            env=env,
+            timeout=120,
+            check=False,
+        )
+
+        assert result.returncode == 0, result.stderr.decode("utf-8", "replace")
+        # Таблица на диске обязана быть валидным UTF-8 с русскими подписями:
+        # именно она потом попадёт в README.
+        assert "Релиз **v1.2.0**" in out.read_text(encoding="utf-8")
+
+    def test_force_utf8_is_idempotent(self):
+        """Повторный вызов не ломает уже перенастроенный поток."""
+        rh._force_utf8_output()
+        rh._force_utf8_output()
+
+
 class TestRenderAndReplace:
     """Формат таблицы и идемпотентность подстановки."""
-
     def test_render_has_markers_and_uppercase_hash(self):
         """Хеш в верхнем регистре: так его показывает PowerShell."""
         digest = "a" * 64

@@ -198,8 +198,28 @@ def cmd_notes(args: argparse.Namespace) -> int:
     return 0
 
 
+def _force_utf8_output() -> None:
+    """Перевести stdout/stderr в UTF-8.
+
+    FIX-35. Шаг ``compute`` печатает таблицу с русскими подписями
+    («Релиз», «Файл», «Размер»), а кодировка консоли на раннере GitHub
+    Actions — cp1252. Печать падала с ``UnicodeEncodeError`` уже ПОСЛЕ
+    того, как хеши посчитаны и SHA256SUMS.txt записан: релиз оставался
+    без архива и без хешей.
+
+    Тесты этого не видели — они вызывают функции напрямую, где вывод
+    перехватывает pytest. Условие воспроизводит отдельный тест: запуск
+    скрипта подпроцессом с ``PYTHONIOENCODING=cp1252``.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            reconfigure(encoding="utf-8", errors="replace")
+
+
 def main(argv: list[str] | None = None) -> int:
     """Точка входа: разбор аргументов и запуск нужной команды."""
+    _force_utf8_output()
     parser = argparse.ArgumentParser(
         description="Публикация SHA256 релиза в README и в описание релиза",
     )

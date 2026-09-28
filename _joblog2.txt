@@ -1,0 +1,326 @@
+Build Release Assets	Set up job	я╗┐2026-09-28T11:08:46.1151249Z Current runner version: '2.337.0'
+Build Release Assets	Set up job	2026-09-28T11:08:46.1210586Z ##[group]Runner Image Provisioner
+Build Release Assets	Set up job	2026-09-28T11:08:46.1211883Z Hosted Compute Agent
+Build Release Assets	Set up job	2026-09-28T11:08:46.1213226Z Version: 20260828.587
+Build Release Assets	Set up job	2026-09-28T11:08:46.1213918Z Commit: abac92662cab4cc7352de4f9f9d2e2419aad9c29
+Build Release Assets	Set up job	2026-09-28T11:08:46.1214630Z Build Date: 2026-08-28T16:44:25Z
+Build Release Assets	Set up job	2026-09-28T11:08:46.1215315Z Worker ID: {9fe581c8-0e72-4a3e-964c-8d37e496bb86}
+Build Release Assets	Set up job	2026-09-28T11:08:46.1215985Z Azure Region: centralus
+Build Release Assets	Set up job	2026-09-28T11:08:46.1216576Z ##[endgroup]
+Build Release Assets	Set up job	2026-09-28T11:08:46.1218029Z ##[group]Operating System
+Build Release Assets	Set up job	2026-09-28T11:08:46.1218714Z Microsoft Windows Server 2025
+Build Release Assets	Set up job	2026-09-28T11:08:46.1219303Z 10.0.26100
+Build Release Assets	Set up job	2026-09-28T11:08:46.1219805Z Datacenter
+Build Release Assets	Set up job	2026-09-28T11:08:46.1220326Z ##[endgroup]
+Build Release Assets	Set up job	2026-09-28T11:08:46.1220847Z ##[group]Runner Image
+Build Release Assets	Set up job	2026-09-28T11:08:46.1221444Z Image: windows-2025-vs2026
+Build Release Assets	Set up job	2026-09-28T11:08:46.1222022Z Version: 20260922.246.2
+Build Release Assets	Set up job	2026-09-28T11:08:46.1223101Z Included Software: https://github.com/actions/runner-images/blob/win25-vs2026/20260922.246/images/windows/Windows2025-VS2026-Readme.md
+Build Release Assets	Set up job	2026-09-28T11:08:46.1225034Z Image Release: https://github.com/actions/runner-images/releases/tag/win25-vs2026%2F20260922.246
+Build Release Assets	Set up job	2026-09-28T11:08:46.1226076Z ##[endgroup]
+Build Release Assets	Set up job	2026-09-28T11:08:46.1227138Z ##[group]GITHUB_TOKEN Permissions
+Build Release Assets	Set up job	2026-09-28T11:08:46.1228979Z Contents: write
+Build Release Assets	Set up job	2026-09-28T11:08:46.1229619Z Metadata: read
+Build Release Assets	Set up job	2026-09-28T11:08:46.1230136Z ##[endgroup]
+Build Release Assets	Set up job	2026-09-28T11:08:46.1232135Z Secret source: Actions
+Build Release Assets	Set up job	2026-09-28T11:08:46.1233596Z Cache mode: write
+Build Release Assets	Set up job	2026-09-28T11:08:46.1234410Z Prepare workflow directory
+Build Release Assets	Set up job	2026-09-28T11:08:46.1794686Z Prepare all required actions
+Build Release Assets	Set up job	2026-09-28T11:08:46.1862855Z Getting action download info
+Build Release Assets	Set up job	2026-09-28T11:08:46.4722180Z Download action repository 'actions/checkout@v4' (SHA:11d5960a326750d5838078e36cf38b85af677262)
+Build Release Assets	Set up job	2026-09-28T11:08:46.6057339Z Download action repository 'actions/setup-python@v5' (SHA:a26af69be951a213d495a4c3e4e4022e16d87065)
+Build Release Assets	Set up job	2026-09-28T11:08:46.7581357Z Download action repository 'softprops/action-gh-release@v2' (SHA:3bb12739c298aeb8a4eeaf626c5b8d85266b0e65)
+Build Release Assets	Set up job	2026-09-28T11:08:47.1514610Z Complete job name: Build Release Assets
+Build Release Assets	Checkout code	я╗┐2026-09-28T11:08:47.2819952Z ##[group]Run actions/checkout@v4
+Build Release Assets	Checkout code	2026-09-28T11:08:47.2820981Z with:
+Build Release Assets	Checkout code	2026-09-28T11:08:47.2821423Z   repository: mrzsrg/KeyboardLayoutCleaner
+Build Release Assets	Checkout code	2026-09-28T11:08:47.2825528Z   token: ***
+Build Release Assets	Checkout code	2026-09-28T11:08:47.2825950Z   ssh-strict: true
+Build Release Assets	Checkout code	2026-09-28T11:08:47.2826362Z   ssh-user: git
+Build Release Assets	Checkout code	2026-09-28T11:08:47.2826775Z   persist-credentials: true
+Build Release Assets	Checkout code	2026-09-28T11:08:47.2827239Z   clean: true
+Build Release Assets	Checkout code	2026-09-28T11:08:47.2827644Z   sparse-checkout-cone-mode: true
+Build Release Assets	Checkout code	2026-09-28T11:08:47.2828133Z   fetch-depth: 1
+Build Release Assets	Checkout code	2026-09-28T11:08:47.2828535Z   fetch-tags: false
+Build Release Assets	Checkout code	2026-09-28T11:08:47.2828941Z   show-progress: true
+Build Release Assets	Checkout code	2026-09-28T11:08:47.2829345Z   lfs: false
+Build Release Assets	Checkout code	2026-09-28T11:08:47.2829721Z   submodules: false
+Build Release Assets	Checkout code	2026-09-28T11:08:47.2830129Z   set-safe-directory: true
+Build Release Assets	Checkout code	2026-09-28T11:08:47.2830598Z   allow-unsafe-pr-checkout: false
+Build Release Assets	Checkout code	2026-09-28T11:08:47.2831342Z env:
+Build Release Assets	Checkout code	2026-09-28T11:08:47.2831741Z   WIN_CERT_PFX: 
+Build Release Assets	Checkout code	2026-09-28T11:08:47.2832137Z   WIN_CERT_PASS: 
+Build Release Assets	Checkout code	2026-09-28T11:08:47.2832535Z ##[endgroup]
+Build Release Assets	Checkout code	2026-09-28T11:08:47.4256357Z Syncing repository: mrzsrg/KeyboardLayoutCleaner
+Build Release Assets	Checkout code	2026-09-28T11:08:47.4258252Z ##[group]Getting Git version info
+Build Release Assets	Checkout code	2026-09-28T11:08:47.4259047Z Working directory is 'D:\a\KeyboardLayoutCleaner\KeyboardLayoutCleaner'
+Build Release Assets	Checkout code	2026-09-28T11:08:47.5283048Z [command]"C:\Program Files\Git\bin\git.exe" version
+Build Release Assets	Checkout code	2026-09-28T11:08:47.8703848Z git version 2.55.0.windows.5
+Build Release Assets	Checkout code	2026-09-28T11:08:47.8756793Z ##[endgroup]
+Build Release Assets	Checkout code	2026-09-28T11:08:47.8777882Z Temporarily overriding HOME='D:\a\_temp\1c1b3b0e-c9b2-4db5-aba2-7f84dd14898d' before making global git config changes
+Build Release Assets	Checkout code	2026-09-28T11:08:47.8779914Z Adding repository directory to the temporary git global config as a safe directory
+Build Release Assets	Checkout code	2026-09-28T11:08:47.8789146Z [command]"C:\Program Files\Git\bin\git.exe" config --global --add safe.directory D:\a\KeyboardLayoutCleaner\KeyboardLayoutCleaner
+Build Release Assets	Checkout code	2026-09-28T11:08:47.9375343Z Deleting the contents of 'D:\a\KeyboardLayoutCleaner\KeyboardLayoutCleaner'
+Build Release Assets	Checkout code	2026-09-28T11:08:47.9382174Z ##[group]Initializing the repository
+Build Release Assets	Checkout code	2026-09-28T11:08:47.9390923Z [command]"C:\Program Files\Git\bin\git.exe" init D:\a\KeyboardLayoutCleaner\KeyboardLayoutCleaner
+Build Release Assets	Checkout code	2026-09-28T11:08:48.0160964Z Initialized empty Git repository in D:/a/KeyboardLayoutCleaner/KeyboardLayoutCleaner/.git/
+Build Release Assets	Checkout code	2026-09-28T11:08:48.0205869Z [command]"C:\Program Files\Git\bin\git.exe" remote add origin https://github.com/mrzsrg/KeyboardLayoutCleaner
+Build Release Assets	Checkout code	2026-09-28T11:08:48.0878857Z ##[endgroup]
+Build Release Assets	Checkout code	2026-09-28T11:08:48.0879612Z ##[group]Disabling automatic garbage collection
+Build Release Assets	Checkout code	2026-09-28T11:08:48.0889755Z [command]"C:\Program Files\Git\bin\git.exe" config --local gc.auto 0
+Build Release Assets	Checkout code	2026-09-28T11:08:48.1200221Z ##[endgroup]
+Build Release Assets	Checkout code	2026-09-28T11:08:48.1202058Z ##[group]Setting up auth
+Build Release Assets	Checkout code	2026-09-28T11:08:48.1214784Z [command]"C:\Program Files\Git\bin\git.exe" config --local --name-only --get-regexp core\.sshCommand
+Build Release Assets	Checkout code	2026-09-28T11:08:48.1585536Z [command]"C:\Program Files\Git\bin\git.exe" submodule foreach --recursive "sh -c \"git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :\""
+Build Release Assets	Checkout code	2026-09-28T11:08:49.6041912Z [command]"C:\Program Files\Git\bin\git.exe" config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+Build Release Assets	Checkout code	2026-09-28T11:08:49.6336057Z [command]"C:\Program Files\Git\bin\git.exe" submodule foreach --recursive "sh -c \"git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :\""
+Build Release Assets	Checkout code	2026-09-28T11:08:50.1462354Z [command]"C:\Program Files\Git\bin\git.exe" config --local --name-only --get-regexp ^includeIf\.gitdir:
+Build Release Assets	Checkout code	2026-09-28T11:08:50.1753599Z [command]"C:\Program Files\Git\bin\git.exe" submodule foreach --recursive "git config --local --show-origin --name-only --get-regexp remote.origin.url"
+Build Release Assets	Checkout code	2026-09-28T11:08:50.7445242Z [command]"C:\Program Files\Git\bin\git.exe" config --local http.https://github.com/.extraheader "AUTHORIZATION: basic ***"
+Build Release Assets	Checkout code	2026-09-28T11:08:50.7746638Z ##[endgroup]
+Build Release Assets	Checkout code	2026-09-28T11:08:50.7747233Z ##[group]Fetching the repository
+Build Release Assets	Checkout code	2026-09-28T11:08:50.7760825Z [command]"C:\Program Files\Git\bin\git.exe" -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +c10af2b75d81b532831d9205dfc1c699d9c05991:refs/tags/v1.2.0
+Build Release Assets	Checkout code	2026-09-28T11:08:51.8850745Z From https://github.com/mrzsrg/KeyboardLayoutCleaner
+Build Release Assets	Checkout code	2026-09-28T11:08:51.8851820Z  * [new ref]         c10af2b75d81b532831d9205dfc1c699d9c05991 -> v1.2.0
+Build Release Assets	Checkout code	2026-09-28T11:08:51.8894406Z ##[endgroup]
+Build Release Assets	Checkout code	2026-09-28T11:08:51.8895127Z ##[group]Determining the checkout info
+Build Release Assets	Checkout code	2026-09-28T11:08:51.8897241Z ##[endgroup]
+Build Release Assets	Checkout code	2026-09-28T11:08:51.8907517Z [command]"C:\Program Files\Git\bin\git.exe" sparse-checkout disable
+Build Release Assets	Checkout code	2026-09-28T11:08:51.9350736Z [command]"C:\Program Files\Git\bin\git.exe" config --local --unset-all extensions.worktreeConfig
+Build Release Assets	Checkout code	2026-09-28T11:08:51.9663991Z ##[group]Checking out the ref
+Build Release Assets	Checkout code	2026-09-28T11:08:51.9672751Z [command]"C:\Program Files\Git\bin\git.exe" checkout --progress --force refs/tags/v1.2.0
+Build Release Assets	Checkout code	2026-09-28T11:08:52.0507274Z Note: switching to 'refs/tags/v1.2.0'.
+Build Release Assets	Checkout code	2026-09-28T11:08:52.0507960Z 
+Build Release Assets	Checkout code	2026-09-28T11:08:52.0508363Z You are in 'detached HEAD' state. You can look around, make experimental
+Build Release Assets	Checkout code	2026-09-28T11:08:52.0509284Z changes and commit them, and you can discard any commits you make in this
+Build Release Assets	Checkout code	2026-09-28T11:08:52.0510524Z state without impacting any branches by switching back to a branch.
+Build Release Assets	Checkout code	2026-09-28T11:08:52.0511807Z 
+Build Release Assets	Checkout code	2026-09-28T11:08:52.0512080Z If you want to create a new branch to retain commits you create, you may
+Build Release Assets	Checkout code	2026-09-28T11:08:52.0512600Z do so (now or later) by using -c with the switch command. Example:
+Build Release Assets	Checkout code	2026-09-28T11:08:52.0512857Z 
+Build Release Assets	Checkout code	2026-09-28T11:08:52.0512995Z   git switch -c <new-branch-name>
+Build Release Assets	Checkout code	2026-09-28T11:08:52.0513189Z 
+Build Release Assets	Checkout code	2026-09-28T11:08:52.0513289Z Or undo this operation with:
+Build Release Assets	Checkout code	2026-09-28T11:08:52.0513450Z 
+Build Release Assets	Checkout code	2026-09-28T11:08:52.0513522Z   git switch -
+Build Release Assets	Checkout code	2026-09-28T11:08:52.0514604Z 
+Build Release Assets	Checkout code	2026-09-28T11:08:52.0514819Z Turn off this advice by setting config variable advice.detachedHead to false
+Build Release Assets	Checkout code	2026-09-28T11:08:52.0515129Z 
+Build Release Assets	Checkout code	2026-09-28T11:08:52.0515320Z HEAD is now at c10af2b release: v1.2.0 (FIX-33, FIX-34)
+Build Release Assets	Checkout code	2026-09-28T11:08:52.0623861Z ##[endgroup]
+Build Release Assets	Checkout code	2026-09-28T11:08:52.1026778Z [command]"C:\Program Files\Git\bin\git.exe" log -1 --format=%H
+Build Release Assets	Checkout code	2026-09-28T11:08:52.1289851Z c10af2b75d81b532831d9205dfc1c699d9c05991
+Build Release Assets	Set up Python	я╗┐2026-09-28T11:08:52.1809728Z ##[group]Run actions/setup-python@v5
+Build Release Assets	Set up Python	2026-09-28T11:08:52.1810097Z with:
+Build Release Assets	Set up Python	2026-09-28T11:08:52.1810291Z   python-version: 3.12
+Build Release Assets	Set up Python	2026-09-28T11:08:52.1810506Z   check-latest: false
+Build Release Assets	Set up Python	2026-09-28T11:08:52.1812759Z   token: ***
+Build Release Assets	Set up Python	2026-09-28T11:08:52.1813204Z   update-environment: true
+Build Release Assets	Set up Python	2026-09-28T11:08:52.1813457Z   allow-prereleases: false
+Build Release Assets	Set up Python	2026-09-28T11:08:52.1813666Z   freethreaded: false
+Build Release Assets	Set up Python	2026-09-28T11:08:52.1813860Z env:
+Build Release Assets	Set up Python	2026-09-28T11:08:52.1814019Z   WIN_CERT_PFX: 
+Build Release Assets	Set up Python	2026-09-28T11:08:52.1814195Z   WIN_CERT_PASS: 
+Build Release Assets	Set up Python	2026-09-28T11:08:52.1814401Z ##[endgroup]
+Build Release Assets	Set up Python	2026-09-28T11:08:52.3437653Z ##[group]Installed versions
+Build Release Assets	Set up Python	2026-09-28T11:08:52.3633728Z (node:1240) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+Build Release Assets	Set up Python	2026-09-28T11:08:52.3634667Z (Use `node --trace-deprecation ...` to show where the warning was created)
+Build Release Assets	Set up Python	2026-09-28T11:08:52.3636258Z Successfully set up CPython (3.12.10)
+Build Release Assets	Set up Python	2026-09-28T11:08:52.3637116Z ##[endgroup]
+Build Release Assets	Install dependencies	я╗┐2026-09-28T11:08:52.3938217Z ##[group]Run python -m pip install --upgrade pip
+Build Release Assets	Install dependencies	2026-09-28T11:08:52.3938749Z ^[[36;1mpython -m pip install --upgrade pip^[[0m
+Build Release Assets	Install dependencies	2026-09-28T11:08:52.3939118Z ^[[36;1mpip install -r requirements.txt pyinstaller^[[0m
+Build Release Assets	Install dependencies	2026-09-28T11:08:52.4606753Z shell: C:\Program Files\PowerShell\7\pwsh.EXE -command ". '{0}'"
+Build Release Assets	Install dependencies	2026-09-28T11:08:52.4607187Z env:
+Build Release Assets	Install dependencies	2026-09-28T11:08:52.4607390Z   WIN_CERT_PFX: 
+Build Release Assets	Install dependencies	2026-09-28T11:08:52.4607605Z   WIN_CERT_PASS: 
+Build Release Assets	Install dependencies	2026-09-28T11:08:52.4607936Z   pythonLocation: C:\hostedtoolcache\windows\Python\3.12.10\x64
+Build Release Assets	Install dependencies	2026-09-28T11:08:52.4608550Z   PKG_CONFIG_PATH: C:\hostedtoolcache\windows\Python\3.12.10\x64/lib/pkgconfig
+Build Release Assets	Install dependencies	2026-09-28T11:08:52.4609101Z   Python_ROOT_DIR: C:\hostedtoolcache\windows\Python\3.12.10\x64
+Build Release Assets	Install dependencies	2026-09-28T11:08:52.4609590Z   Python2_ROOT_DIR: C:\hostedtoolcache\windows\Python\3.12.10\x64
+Build Release Assets	Install dependencies	2026-09-28T11:08:52.4610072Z   Python3_ROOT_DIR: C:\hostedtoolcache\windows\Python\3.12.10\x64
+Build Release Assets	Install dependencies	2026-09-28T11:08:52.4610458Z ##[endgroup]
+Build Release Assets	Install dependencies	2026-09-28T11:08:56.8991622Z Requirement already satisfied: pip in C:\hostedtoolcache\windows\Python\3.12.10\x64\Lib\site-packages (26.2.1)
+Build Release Assets	Install dependencies	2026-09-28T11:08:59.1204053Z Collecting pyinstaller
+Build Release Assets	Install dependencies	2026-09-28T11:08:59.3439716Z   Downloading pyinstaller-6.22.3-py3-none-win_amd64.whl.metadata (8.5 kB)
+Build Release Assets	Install dependencies	2026-09-28T11:08:59.4031112Z Collecting customtkinter==6.0.0 (from -r requirements.txt (line 7))
+Build Release Assets	Install dependencies	2026-09-28T11:08:59.4143748Z   Downloading customtkinter-6.0.0-py3-none-any.whl.metadata (698 bytes)
+Build Release Assets	Install dependencies	2026-09-28T11:08:59.4638118Z Collecting darkdetect==0.8.0 (from -r requirements.txt (line 9))
+Build Release Assets	Install dependencies	2026-09-28T11:08:59.4747688Z   Downloading darkdetect-0.8.0-py3-none-any.whl.metadata (3.6 kB)
+Build Release Assets	Install dependencies	2026-09-28T11:08:59.5003013Z Requirement already satisfied: packaging==26.3 in C:\hostedtoolcache\windows\Python\3.12.10\x64\Lib\site-packages (from -r requirements.txt (line 11)) (26.3)
+Build Release Assets	Install dependencies	2026-09-28T11:08:59.5299207Z Collecting altgraph (from pyinstaller)
+Build Release Assets	Install dependencies	2026-09-28T11:08:59.5415118Z   Downloading altgraph-0.17.5-py2.py3-none-any.whl.metadata (7.5 kB)
+Build Release Assets	Install dependencies	2026-09-28T11:08:59.5928061Z Collecting pefile>=2022.5.30 (from pyinstaller)
+Build Release Assets	Install dependencies	2026-09-28T11:08:59.6042239Z   Downloading pefile-2024.8.26-py3-none-any.whl.metadata (1.4 kB)
+Build Release Assets	Install dependencies	2026-09-28T11:08:59.6577400Z Collecting pyinstaller-hooks-contrib>=2026.7 (from pyinstaller)
+Build Release Assets	Install dependencies	2026-09-28T11:08:59.6687223Z   Downloading pyinstaller_hooks_contrib-2026.7-py3-none-any.whl.metadata (16 kB)
+Build Release Assets	Install dependencies	2026-09-28T11:08:59.7260337Z Collecting pywin32-ctypes>=0.2.1 (from pyinstaller)
+Build Release Assets	Install dependencies	2026-09-28T11:08:59.7373597Z   Downloading pywin32_ctypes-0.2.3-py3-none-any.whl.metadata (3.9 kB)
+Build Release Assets	Install dependencies	2026-09-28T11:08:59.8934703Z Collecting setuptools>=42.0.0 (from pyinstaller)
+Build Release Assets	Install dependencies	2026-09-28T11:08:59.9051346Z   Downloading setuptools-84.0.0-py3-none-any.whl.metadata (6.6 kB)
+Build Release Assets	Install dependencies	2026-09-28T11:08:59.9408977Z Downloading customtkinter-6.0.0-py3-none-any.whl (302 kB)
+Build Release Assets	Install dependencies	2026-09-28T11:09:00.0060654Z Downloading darkdetect-0.8.0-py3-none-any.whl (9.0 kB)
+Build Release Assets	Install dependencies	2026-09-28T11:09:00.0389773Z Downloading pyinstaller-6.22.3-py3-none-win_amd64.whl (1.5 MB)
+Build Release Assets	Install dependencies	2026-09-28T11:09:00.0831979Z    ---------------------------------------- 1.5/1.5 MB 38.5 MB/s  0:00:00
+Build Release Assets	Install dependencies	2026-09-28T11:09:00.0941032Z Downloading pefile-2024.8.26-py3-none-any.whl (74 kB)
+Build Release Assets	Install dependencies	2026-09-28T11:09:00.1207492Z Downloading pyinstaller_hooks_contrib-2026.7-py3-none-any.whl (459 kB)
+Build Release Assets	Install dependencies	2026-09-28T11:09:00.1536914Z Downloading pywin32_ctypes-0.2.3-py3-none-any.whl (30 kB)
+Build Release Assets	Install dependencies	2026-09-28T11:09:00.1802512Z Downloading setuptools-84.0.0-py3-none-any.whl (818 kB)
+Build Release Assets	Install dependencies	2026-09-28T11:09:00.2163212Z    ---------------------------------------- 818.2/818.2 kB 17.9 MB/s  0:00:00
+Build Release Assets	Install dependencies	2026-09-28T11:09:00.2271030Z Downloading altgraph-0.17.5-py2.py3-none-any.whl (21 kB)
+Build Release Assets	Install dependencies	2026-09-28T11:09:00.3647154Z Installing collected packages: altgraph, setuptools, pywin32-ctypes, pyinstaller-hooks-contrib, pefile, darkdetect, pyinstaller, customtkinter
+Build Release Assets	Install dependencies	2026-09-28T11:09:07.2160171Z 
+Build Release Assets	Install dependencies	2026-09-28T11:09:07.2191276Z Successfully installed altgraph-0.17.5 customtkinter-6.0.0 darkdetect-0.8.0 pefile-2024.8.26 pyinstaller-6.22.3 pyinstaller-hooks-contrib-2026.7 pywin32-ctypes-0.2.3 setuptools-84.0.0
+Build Release Assets	Build executable	я╗┐2026-09-28T11:09:07.4187757Z ##[group]Run python -m PyInstaller keyboard_cleaner.spec --noconfirm --clean
+Build Release Assets	Build executable	2026-09-28T11:09:07.4188672Z ^[[36;1mpython -m PyInstaller keyboard_cleaner.spec --noconfirm --clean^[[0m
+Build Release Assets	Build executable	2026-09-28T11:09:07.4263687Z shell: C:\Program Files\PowerShell\7\pwsh.EXE -command ". '{0}'"
+Build Release Assets	Build executable	2026-09-28T11:09:07.4264030Z env:
+Build Release Assets	Build executable	2026-09-28T11:09:07.4264205Z   WIN_CERT_PFX: 
+Build Release Assets	Build executable	2026-09-28T11:09:07.4264840Z   WIN_CERT_PASS: 
+Build Release Assets	Build executable	2026-09-28T11:09:07.4265128Z   pythonLocation: C:\hostedtoolcache\windows\Python\3.12.10\x64
+Build Release Assets	Build executable	2026-09-28T11:09:07.4265596Z   PKG_CONFIG_PATH: C:\hostedtoolcache\windows\Python\3.12.10\x64/lib/pkgconfig
+Build Release Assets	Build executable	2026-09-28T11:09:07.4266037Z   Python_ROOT_DIR: C:\hostedtoolcache\windows\Python\3.12.10\x64
+Build Release Assets	Build executable	2026-09-28T11:09:07.4266424Z   Python2_ROOT_DIR: C:\hostedtoolcache\windows\Python\3.12.10\x64
+Build Release Assets	Build executable	2026-09-28T11:09:07.4266807Z   Python3_ROOT_DIR: C:\hostedtoolcache\windows\Python\3.12.10\x64
+Build Release Assets	Build executable	2026-09-28T11:09:07.4267113Z ##[endgroup]
+Build Release Assets	Build executable	2026-09-28T11:09:08.1283561Z 306 INFO: PyInstaller: 6.22.3, contrib hooks: 2026.7
+Build Release Assets	Build executable	2026-09-28T11:09:08.1287055Z 306 INFO: Python: 3.12.10
+Build Release Assets	Build executable	2026-09-28T11:09:08.1511208Z 329 INFO: Platform: Windows-2025Server-10.0.26100-SP0
+Build Release Assets	Build executable	2026-09-28T11:09:08.1512359Z 329 INFO: Python environment: C:\hostedtoolcache\windows\Python\3.12.10\x64
+Build Release Assets	Build executable	2026-09-28T11:09:08.1541486Z 331 INFO: Removing temporary files and cleaning cache in C:\Users\runneradmin\AppData\Local\pyinstaller
+Build Release Assets	Build executable	2026-09-28T11:09:08.1552560Z keyboard_cleaner.spec:11: SyntaxWarning: invalid escape sequence '\.'
+Build Release Assets	Build executable	2026-09-28T11:09:08.1553228Z   (\u043d\u0443\u0436\u043d\u043e \u0442\u043e\u043b\u044c\u043a\u043e \u0434\u043b\u044f \u0432\u0435\u0442\u043a\u0438 HKU\.DEFAULT).
+Build Release Assets	Build executable	2026-09-28T11:09:08.2261944Z 403 INFO: Module search paths (PYTHONPATH):
+Build Release Assets	Build executable	2026-09-28T11:09:08.2262859Z ['D:\\a\\KeyboardLayoutCleaner\\KeyboardLayoutCleaner',
+Build Release Assets	Build executable	2026-09-28T11:09:08.2264045Z  'C:\\hostedtoolcache\\windows\\Python\\3.12.10\\x64\\python312.zip',
+Build Release Assets	Build executable	2026-09-28T11:09:08.2264738Z  'C:\\hostedtoolcache\\windows\\Python\\3.12.10\\x64\\DLLs',
+Build Release Assets	Build executable	2026-09-28T11:09:08.2265711Z  'C:\\hostedtoolcache\\windows\\Python\\3.12.10\\x64\\Lib',
+Build Release Assets	Build executable	2026-09-28T11:09:08.2266394Z  'C:\\hostedtoolcache\\windows\\Python\\3.12.10\\x64',
+Build Release Assets	Build executable	2026-09-28T11:09:08.2267228Z  'C:\\hostedtoolcache\\windows\\Python\\3.12.10\\x64\\Lib\\site-packages',
+Build Release Assets	Build executable	2026-09-28T11:09:08.2267980Z  'D:\\a\\KeyboardLayoutCleaner\\KeyboardLayoutCleaner']
+Build Release Assets	Build executable	2026-09-28T11:09:08.4632324Z 641 INFO: Appending 'datas' from .spec
+Build Release Assets	Build executable	2026-09-28T11:09:08.4646280Z 642 INFO: checking Analysis
+Build Release Assets	Build executable	2026-09-28T11:09:08.4646934Z 642 INFO: Building Analysis because Analysis-00.toc is non existent
+Build Release Assets	Build executable	2026-09-28T11:09:08.4647973Z 642 INFO: Looking for Python shared library...
+Build Release Assets	Build executable	2026-09-28T11:09:08.4648789Z 642 INFO: Using Python shared library: C:\hostedtoolcache\windows\Python\3.12.10\x64\python312.dll
+Build Release Assets	Build executable	2026-09-28T11:09:08.4649613Z 642 INFO: Running Analysis Analysis-00.toc
+Build Release Assets	Build executable	2026-09-28T11:09:08.4650122Z 642 INFO: Target bytecode optimization level: 0
+Build Release Assets	Build executable	2026-09-28T11:09:08.4650674Z 642 INFO: Initializing module dependency graph...
+Build Release Assets	Build executable	2026-09-28T11:09:08.4680318Z 646 INFO: Initializing module graph hook caches...
+Build Release Assets	Build executable	2026-09-28T11:09:08.4840804Z 662 INFO: Analyzing modules for base_library.zip ...
+Build Release Assets	Build executable	2026-09-28T11:09:09.2190994Z 1397 INFO: Processing standard module hook 'hook-encodings.py' from 'C:\\hostedtoolcache\\windows\\Python\\3.12.10\\x64\\Lib\\site-packages\\PyInstaller\\hooks'
+Build Release Assets	Build executable	2026-09-28T11:09:10.0207210Z 2198 INFO: Processing standard module hook 'hook-math.py' from 'C:\\hostedtoolcache\\windows\\Python\\3.12.10\\x64\\Lib\\site-packages\\PyInstaller\\hooks'
+Build Release Assets	Build executable	2026-09-28T11:09:11.5238670Z 3700 INFO: Processing standard module hook 'hook-pickle.py' from 'C:\\hostedtoolcache\\windows\\Python\\3.12.10\\x64\\Lib\\site-packages\\PyInstaller\\hooks'
+Build Release Assets	Build executable	2026-09-28T11:09:12.4852675Z 4663 INFO: Processing standard module hook 'hook-heapq.py' from 'C:\\hostedtoolcache\\windows\\Python\\3.12.10\\x64\\Lib\\site-packages\\PyInstaller\\hooks'
+Build Release Assets	Build executable	2026-09-28T11:09:13.1488311Z 5327 INFO: Caching module dependency graph...
+Build Release Assets	Build executable	2026-09-28T11:09:13.1865349Z 5363 INFO: Analyzing D:\a\KeyboardLayoutCleaner\KeyboardLayoutCleaner\main.py
+Build Release Assets	Build executable	2026-09-28T11:09:13.2765957Z 5454 INFO: Processing standard module hook 'hook-_ctypes.py' from 'C:\\hostedtoolcache\\windows\\Python\\3.12.10\\x64\\Lib\\site-packages\\PyInstaller\\hooks'
+Build Release Assets	Build executable	2026-09-28T11:09:13.3029230Z 5480 INFO: Processing pre-find-module-path hook 'hook-tkinter.py' from 'C:\\hostedtoolcache\\windows\\Python\\3.12.10\\x64\\Lib\\site-packages\\PyInstaller\\hooks\\pre_find_module_path'
+Build Release Assets	Build executable	2026-09-28T11:09:13.3035886Z 5480 INFO: TclTkInfo: initializing cached Tcl/Tk info...
+Build Release Assets	Build executable	2026-09-28T11:09:14.2932336Z 6470 INFO: Processing standard module hook 'hook-_tkinter.py' from 'C:\\hostedtoolcache\\windows\\Python\\3.12.10\\x64\\Lib\\site-packages\\PyInstaller\\hooks'
+Build Release Assets	Build executable	2026-09-28T11:09:14.4935504Z 6670 INFO: Processing standard module hook 'hook-customtkinter.py' from 'C:\\hostedtoolcache\\windows\\Python\\3.12.10\\x64\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+Build Release Assets	Build executable	2026-09-28T11:09:14.6399359Z 6817 INFO: Processing standard module hook 'hook-platform.py' from 'C:\\hostedtoolcache\\windows\\Python\\3.12.10\\x64\\Lib\\site-packages\\PyInstaller\\hooks'
+Build Release Assets	Build executable	2026-09-28T11:09:14.6419526Z 6819 INFO: Processing pre-safe-import-module hook 'hook-packaging.py' from 'C:\\hostedtoolcache\\windows\\Python\\3.12.10\\x64\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+Build Release Assets	Build executable	2026-09-28T11:09:14.6425781Z 6819 INFO: SetuptoolsInfo: initializing cached setuptools info...
+Build Release Assets	Build executable	2026-09-28T11:09:15.3876863Z 7566 INFO: Processing pre-safe-import-module hook 'hook-typing_extensions.py' from 'C:\\hostedtoolcache\\windows\\Python\\3.12.10\\x64\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+Build Release Assets	Build executable	2026-09-28T11:09:16.0878993Z 8265 INFO: Processing module hooks (post-graph stage)...
+Build Release Assets	Build executable	2026-09-28T11:09:16.0917264Z 8269 INFO: Processing standard module hook 'hook-_tkinter.py' from 'C:\\hostedtoolcache\\windows\\Python\\3.12.10\\x64\\Lib\\site-packages\\PyInstaller\\hooks'
+Build Release Assets	Build executable	2026-09-28T11:09:16.1031199Z 8281 INFO: Performing binary vs. data reclassification (954 entries)
+Build Release Assets	Build executable	2026-09-28T11:09:16.8203404Z 8998 INFO: Looking for ctypes DLLs
+Build Release Assets	Build executable	2026-09-28T11:09:16.8605174Z 9037 WARNING: Ignoring AppKit.framework/AppKit imported from C:\hostedtoolcache\windows\Python\3.12.10\x64\Lib\site-packages\darkdetect\_mac_detect.py - only basenames are supported with ctypes imports!
+Build Release Assets	Build executable	2026-09-28T11:09:16.8771588Z 9055 INFO: Analyzing run-time hooks ...
+Build Release Assets	Build executable	2026-09-28T11:09:16.8785780Z 9055 INFO: Including run-time hook 'pyi_rth_inspect.py' from 'C:\\hostedtoolcache\\windows\\Python\\3.12.10\\x64\\Lib\\site-packages\\PyInstaller\\hooks\\rthooks'
+Build Release Assets	Build executable	2026-09-28T11:09:16.8812184Z 9059 INFO: Including run-time hook 'pyi_rth__tkinter.py' from 'C:\\hostedtoolcache\\windows\\Python\\3.12.10\\x64\\Lib\\site-packages\\PyInstaller\\hooks\\rthooks'
+Build Release Assets	Build executable	2026-09-28T11:09:16.9085466Z 9086 INFO: Creating base_library.zip...
+Build Release Assets	Build executable	2026-09-28T11:09:16.9298592Z 9108 INFO: Looking for dynamic libraries
+Build Release Assets	Build executable	2026-09-28T11:09:17.1484566Z 9326 INFO: Extra DLL search directories (AddDllDirectory): []
+Build Release Assets	Build executable	2026-09-28T11:09:17.1485067Z 9326 INFO: Extra DLL search directories (PATH): []
+Build Release Assets	Build executable	2026-09-28T11:09:17.9163517Z 10093 INFO: Warnings written to D:\a\KeyboardLayoutCleaner\KeyboardLayoutCleaner\build\keyboard_cleaner\warn-keyboard_cleaner.txt
+Build Release Assets	Build executable	2026-09-28T11:09:17.9399219Z 10117 INFO: Graph cross-reference written to D:\a\KeyboardLayoutCleaner\KeyboardLayoutCleaner\build\keyboard_cleaner\xref-keyboard_cleaner.html
+Build Release Assets	Build executable	2026-09-28T11:09:17.9755718Z 10152 INFO: checking PYZ
+Build Release Assets	Build executable	2026-09-28T11:09:17.9756816Z 10152 INFO: Building PYZ because PYZ-00.toc is non existent
+Build Release Assets	Build executable	2026-09-28T11:09:17.9758091Z 10152 INFO: Building PYZ (ZlibArchive) D:\a\KeyboardLayoutCleaner\KeyboardLayoutCleaner\build\keyboard_cleaner\PYZ-00.pyz
+Build Release Assets	Build executable	2026-09-28T11:09:18.2073107Z 10384 INFO: Building PYZ (ZlibArchive) D:\a\KeyboardLayoutCleaner\KeyboardLayoutCleaner\build\keyboard_cleaner\PYZ-00.pyz completed successfully.
+Build Release Assets	Build executable	2026-09-28T11:09:18.2249786Z 10402 INFO: checking PKG
+Build Release Assets	Build executable	2026-09-28T11:09:18.2251023Z 10402 INFO: Building PKG because PKG-00.toc is non existent
+Build Release Assets	Build executable	2026-09-28T11:09:18.2252741Z 10402 INFO: Building PKG (CArchive) KeyboardLayoutCleaner.pkg
+Build Release Assets	Build executable	2026-09-28T11:09:18.2806436Z 10457 INFO: Building PKG (CArchive) KeyboardLayoutCleaner.pkg completed successfully.
+Build Release Assets	Build executable	2026-09-28T11:09:18.2815197Z 10457 INFO: Bootloader C:\hostedtoolcache\windows\Python\3.12.10\x64\Lib\site-packages\PyInstaller\bootloader\Windows-64bit-intel\runw.exe
+Build Release Assets	Build executable	2026-09-28T11:09:18.2816655Z 10459 INFO: checking EXE
+Build Release Assets	Build executable	2026-09-28T11:09:18.2817171Z 10459 INFO: Building EXE because EXE-00.toc is non existent
+Build Release Assets	Build executable	2026-09-28T11:09:18.2817710Z 10459 INFO: Building EXE from EXE-00.toc
+Build Release Assets	Build executable	2026-09-28T11:09:18.2819725Z 10459 INFO: Copying bootloader EXE to D:\a\KeyboardLayoutCleaner\KeyboardLayoutCleaner\build\keyboard_cleaner\KeyboardLayoutCleaner.exe
+Build Release Assets	Build executable	2026-09-28T11:09:18.2842791Z 10461 INFO: Copying icon to EXE
+Build Release Assets	Build executable	2026-09-28T11:09:18.2861061Z 10463 INFO: Copying version information to EXE
+Build Release Assets	Build executable	2026-09-28T11:09:18.2902277Z 10467 INFO: Copying 0 resources to EXE
+Build Release Assets	Build executable	2026-09-28T11:09:18.2902718Z 10467 INFO: Embedding manifest in EXE
+Build Release Assets	Build executable	2026-09-28T11:09:18.2919241Z 10469 INFO: Appending PKG archive to EXE
+Build Release Assets	Build executable	2026-09-28T11:09:18.2933107Z 10471 INFO: Fixing EXE headers
+Build Release Assets	Build executable	2026-09-28T11:09:18.3738061Z 10551 INFO: Building EXE from EXE-00.toc completed successfully.
+Build Release Assets	Build executable	2026-09-28T11:09:18.3847252Z 10562 INFO: checking COLLECT
+Build Release Assets	Build executable	2026-09-28T11:09:18.3848708Z 10562 INFO: Building COLLECT because COLLECT-00.toc is non existent
+Build Release Assets	Build executable	2026-09-28T11:09:18.3851309Z 10563 INFO: Building COLLECT COLLECT-00.toc
+Build Release Assets	Build executable	2026-09-28T11:09:19.0993408Z 11275 INFO: Building COLLECT COLLECT-00.toc completed successfully.
+Build Release Assets	Build executable	2026-09-28T11:09:19.1188025Z 11295 INFO: Build complete! The results are available in: D:\a\KeyboardLayoutCleaner\KeyboardLayoutCleaner\dist
+Build Release Assets	Create ZIP archive	я╗┐2026-09-28T11:09:19.3133886Z ##[group]Run $tag = "v1.2.0".TrimStart("v")
+Build Release Assets	Create ZIP archive	2026-09-28T11:09:19.3134303Z ^[[36;1m$tag = "v1.2.0".TrimStart("v")^[[0m
+Build Release Assets	Create ZIP archive	2026-09-28T11:09:19.3134658Z ^[[36;1m$zip = "KeyboardLayoutCleaner-$tag-portable.zip"^[[0m
+Build Release Assets	Create ZIP archive	2026-09-28T11:09:19.3135066Z ^[[36;1m# ╨б ╨┐╨░╨┐╨║╨╛╨╣, ╨░ ╨╜╨╡ ╨╡╤С ╤Б╨╛╨┤╨╡╤А╨╢╨╕╨╝╤Л╨╝: ╤В╨░╨║ ╨╢╨╡, ╨║╨░╨║ ╨▓ BUILD.md ╨╕ ╨▓ v1.1.0 тАФ^[[0m
+Build Release Assets	Create ZIP archive	2026-09-28T11:09:19.3135483Z ^[[36;1m# ╤А╨░╤Б╨┐╨░╨║╨╛╨▓╨║╨░ ╨┤╨░╤С╤В ╨║╨░╤В╨░╨╗╨╛╨│ KeyboardLayoutCleaner\, ╨╕ ╨╕╨╝╨╡╨╜╨╜╨╛ ╤В╨░╨║╨╛╨╣^[[0m
+Build Release Assets	Create ZIP archive	2026-09-28T11:09:19.3135914Z ^[[36;1m# ╨┐╤Г╤В╤М ╨┤╨╛ EXE ╨╛╨┐╨╕╤Б╨░╨╜ ╨▓ README (╨┤╨╗╤П ╨╛╨╜╨╗╨░╨╣╨╜-╨┐╤А╨╛╨▓╨╡╤А╨║╨╕ ╨╕ ╨┤╨╗╤П ╤Е╨╡╤И╨░).^[[0m
+Build Release Assets	Create ZIP archive	2026-09-28T11:09:19.3136405Z ^[[36;1mCompress-Archive -Path "dist\KeyboardLayoutCleaner" -DestinationPath $zip^[[0m
+Build Release Assets	Create ZIP archive	2026-09-28T11:09:19.3136911Z ^[[36;1m"ARCHIVE=$zip" | Out-File -FilePath $env:GITHUB_ENV -Append^[[0m
+Build Release Assets	Create ZIP archive	2026-09-28T11:09:19.3207445Z shell: C:\Program Files\PowerShell\7\pwsh.EXE -command ". '{0}'"
+Build Release Assets	Create ZIP archive	2026-09-28T11:09:19.3207977Z env:
+Build Release Assets	Create ZIP archive	2026-09-28T11:09:19.3208143Z   WIN_CERT_PFX: 
+Build Release Assets	Create ZIP archive	2026-09-28T11:09:19.3208321Z   WIN_CERT_PASS: 
+Build Release Assets	Create ZIP archive	2026-09-28T11:09:19.3208596Z   pythonLocation: C:\hostedtoolcache\windows\Python\3.12.10\x64
+Build Release Assets	Create ZIP archive	2026-09-28T11:09:19.3209097Z   PKG_CONFIG_PATH: C:\hostedtoolcache\windows\Python\3.12.10\x64/lib/pkgconfig
+Build Release Assets	Create ZIP archive	2026-09-28T11:09:19.3209561Z   Python_ROOT_DIR: C:\hostedtoolcache\windows\Python\3.12.10\x64
+Build Release Assets	Create ZIP archive	2026-09-28T11:09:19.3209968Z   Python2_ROOT_DIR: C:\hostedtoolcache\windows\Python\3.12.10\x64
+Build Release Assets	Create ZIP archive	2026-09-28T11:09:19.3210362Z   Python3_ROOT_DIR: C:\hostedtoolcache\windows\Python\3.12.10\x64
+Build Release Assets	Create ZIP archive	2026-09-28T11:09:19.3210667Z ##[endgroup]
+Build Release Assets	Checksums: compute	я╗┐2026-09-28T11:09:21.9581900Z ##[group]Run python scripts/release_hashes.py compute --archive "$env:ARCHIVE" --tag "v1.2.0" --out "$env:RUNNER_TEMP\release-table.md"
+Build Release Assets	Checksums: compute	2026-09-28T11:09:21.9583652Z ^[[36;1mpython scripts/release_hashes.py compute --archive "$env:ARCHIVE" --tag "v1.2.0" --out "$env:RUNNER_TEMP\release-table.md"^[[0m
+Build Release Assets	Checksums: compute	2026-09-28T11:09:21.9679306Z shell: C:\Program Files\PowerShell\7\pwsh.EXE -command ". '{0}'"
+Build Release Assets	Checksums: compute	2026-09-28T11:09:21.9679668Z env:
+Build Release Assets	Checksums: compute	2026-09-28T11:09:21.9679839Z   WIN_CERT_PFX: 
+Build Release Assets	Checksums: compute	2026-09-28T11:09:21.9680022Z   WIN_CERT_PASS: 
+Build Release Assets	Checksums: compute	2026-09-28T11:09:21.9680319Z   pythonLocation: C:\hostedtoolcache\windows\Python\3.12.10\x64
+Build Release Assets	Checksums: compute	2026-09-28T11:09:21.9680780Z   PKG_CONFIG_PATH: C:\hostedtoolcache\windows\Python\3.12.10\x64/lib/pkgconfig
+Build Release Assets	Checksums: compute	2026-09-28T11:09:21.9681234Z   Python_ROOT_DIR: C:\hostedtoolcache\windows\Python\3.12.10\x64
+Build Release Assets	Checksums: compute	2026-09-28T11:09:21.9681632Z   Python2_ROOT_DIR: C:\hostedtoolcache\windows\Python\3.12.10\x64
+Build Release Assets	Checksums: compute	2026-09-28T11:09:21.9682061Z   Python3_ROOT_DIR: C:\hostedtoolcache\windows\Python\3.12.10\x64
+Build Release Assets	Checksums: compute	2026-09-28T11:09:21.9682476Z   ARCHIVE: KeyboardLayoutCleaner-1.2.0-portable.zip
+Build Release Assets	Checksums: compute	2026-09-28T11:09:21.9682763Z ##[endgroup]
+Build Release Assets	Checksums: compute	2026-09-28T11:09:22.3635777Z Traceback (most recent call last):
+Build Release Assets	Checksums: compute	2026-09-28T11:09:22.3642482Z   File "D:\a\KeyboardLayoutCleaner\KeyboardLayoutCleaner\scripts\release_hashes.py", line 238, in <module>
+Build Release Assets	Checksums: compute	2026-09-28T11:09:22.3643364Z     sys.exit(main())
+Build Release Assets	Checksums: compute	2026-09-28T11:09:22.3643574Z              ^^^^^^
+Build Release Assets	Checksums: compute	2026-09-28T11:09:22.3644061Z   File "D:\a\KeyboardLayoutCleaner\KeyboardLayoutCleaner\scripts\release_hashes.py", line 231, in main
+Build Release Assets	Checksums: compute	2026-09-28T11:09:22.3645866Z     return int(args.func(args))
+Build Release Assets	Checksums: compute	2026-09-28T11:09:22.3646293Z                ^^^^^^^^^^^^^^^
+Build Release Assets	Checksums: compute	2026-09-28T11:09:22.3647170Z   File "D:\a\KeyboardLayoutCleaner\KeyboardLayoutCleaner\scripts\release_hashes.py", line 159, in cmd_compute
+Build Release Assets	Checksums: compute	2026-09-28T11:09:22.3652321Z     print(table)  # noqa: T201 я┐╜ \u0441\u043a\u0440\u0438\u043f\u0442 \u0434\u043b\u044f CLI
+Build Release Assets	Checksums: compute	2026-09-28T11:09:22.3653029Z     ^^^^^^^^^^^^
+Build Release Assets	Checksums: compute	2026-09-28T11:09:22.3653518Z   File "C:\hostedtoolcache\windows\Python\3.12.10\x64\Lib\encodings\cp1252.py", line 19, in encode
+Build Release Assets	Checksums: compute	2026-09-28T11:09:22.3654307Z     return codecs.charmap_encode(input,self.errors,encoding_table)[0]
+Build Release Assets	Checksums: compute	2026-09-28T11:09:22.3654874Z            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Build Release Assets	Checksums: compute	2026-09-28T11:09:22.3655526Z UnicodeEncodeError: 'charmap' codec can't encode characters in position 29-33: character maps to <undefined>
+Build Release Assets	Checksums: compute	2026-09-28T11:09:22.4737437Z ##[error]Process completed with exit code 1.
+Build Release Assets	Post Checkout code	я╗┐2026-09-28T11:09:22.5051043Z Post job cleanup.
+Build Release Assets	Post Checkout code	2026-09-28T11:09:22.7100495Z [command]"C:\Program Files\Git\bin\git.exe" version
+Build Release Assets	Post Checkout code	2026-09-28T11:09:22.7395473Z git version 2.55.0.windows.5
+Build Release Assets	Post Checkout code	2026-09-28T11:09:22.7478225Z Temporarily overriding HOME='D:\a\_temp\5837359d-d015-4862-97b4-611d5a26d653' before making global git config changes
+Build Release Assets	Post Checkout code	2026-09-28T11:09:22.7480746Z Adding repository directory to the temporary git global config as a safe directory
+Build Release Assets	Post Checkout code	2026-09-28T11:09:22.7491981Z [command]"C:\Program Files\Git\bin\git.exe" config --global --add safe.directory D:\a\KeyboardLayoutCleaner\KeyboardLayoutCleaner
+Build Release Assets	Post Checkout code	2026-09-28T11:09:22.7908059Z [command]"C:\Program Files\Git\bin\git.exe" config --local --name-only --get-regexp core\.sshCommand
+Build Release Assets	Post Checkout code	2026-09-28T11:09:22.8255996Z [command]"C:\Program Files\Git\bin\git.exe" submodule foreach --recursive "sh -c \"git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :\""
+Build Release Assets	Post Checkout code	2026-09-28T11:09:23.3696530Z [command]"C:\Program Files\Git\bin\git.exe" config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+Build Release Assets	Post Checkout code	2026-09-28T11:09:23.3953417Z http.https://github.com/.extraheader
+Build Release Assets	Post Checkout code	2026-09-28T11:09:23.3996325Z [command]"C:\Program Files\Git\bin\git.exe" config --local --unset-all http.https://github.com/.extraheader
+Build Release Assets	Post Checkout code	2026-09-28T11:09:23.4296063Z [command]"C:\Program Files\Git\bin\git.exe" submodule foreach --recursive "sh -c \"git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :\""
+Build Release Assets	Post Checkout code	2026-09-28T11:09:23.9795107Z [command]"C:\Program Files\Git\bin\git.exe" config --local --name-only --get-regexp ^includeIf\.gitdir:
+Build Release Assets	Post Checkout code	2026-09-28T11:09:24.0088193Z [command]"C:\Program Files\Git\bin\git.exe" submodule foreach --recursive "git config --local --show-origin --name-only --get-regexp remote.origin.url"
+Build Release Assets	Complete job	я╗┐2026-09-28T11:09:24.5856698Z Cleaning up orphan processes
+Build Release Assets	Complete job	2026-09-28T11:09:24.5918544Z ##[warning]Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/setup-python@v5. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/

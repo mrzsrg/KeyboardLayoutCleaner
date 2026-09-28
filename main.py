@@ -402,6 +402,7 @@ from gui_widgets import ActionButtons, AdminBanner, StatusBar  # noqa: E402
 from scanner import (  # noqa: E402
     get_affected_branches,
     get_layout_name,
+    get_session_layout_klids,
     scan_keyboard_layouts,
 )
 
@@ -462,7 +463,57 @@ def _build_layout_name(klid: str) -> str:
         return name
     if name:
         return f"{name} ({klid})"
-    return f"Layout ({klid})"
+    # FIX-34: раньше здесь было «Layout (KLID)». Слово «Layout» выглядело как
+    # название раскладки, но им не было — и по строке нельзя было понять, что
+    # имя не нашлось. Теперь это честно сказано прямо: раскладки нет.
+    return _t("layout_name_unknown", klid=klid)
+
+
+# Ключи статусной метки строки списка. Смысл метки — ответ на главный вопрос
+# пользователя «это фантом или рабочая раскладка?», который до сих пор
+# приходилось выяснять вручную, открывая каждую ветку реестра.
+_STATUS_IN_LIST = "status_in_list"
+_STATUS_CACHE_ONLY = "status_cache_only"
+_STATUS_ACTIVE_CACHE = "status_active_cache"
+_STATUS_NOT_SWITCHABLE = "status_not_switchable"
+
+
+def _layout_status_key(
+    klid: str, layouts_data: dict, session_klids: set[str] | None = None
+) -> str:
+    """Ключ локализации статусной метки для строки списка.
+
+    FIX-34. Решения принимаются по данным последнего скана, ничего не
+    запускается: статус — прочитанная метка, а не новая проверка.
+
+    - ``status_in_list`` — раскладка есть в списке языков и в Preload;
+    - ``status_active_cache`` — записи только в CTF, но язык активен в
+      Windows: это кеш рабочей раскладки, Windows пересоздаст её;
+    - ``status_cache_only`` — записи только в CTF, а языка нет в списке:
+      вероятный остаток, а не раскладка, которой пользуются;
+    - ``status_not_switchable`` — прописана в настройках, но отсутствует в
+      GetKeyboardLayoutList: язык есть, а переключить нельзя.
+    """
+    locs = layouts_data.get(klid) or []
+    if not locs:
+        return _STATUS_IN_LIST
+    paths = [str(loc.get("path", "")) for loc in locs]
+    in_settings = any(
+        "Preload" in path
+        or "Get-WinUserLanguageList" in path
+        or "User Profile" in path
+        for path in paths
+    )
+    only_cache = all("CTF" in path.upper() for path in paths)
+    if only_cache:
+        # Активный язык восстанавливает кеш сам — называть это остатком
+        # было бы враньём (та же ошибка, что в details_active_cache).
+        if _active_lang_cache(klid, layouts_data):
+            return _STATUS_ACTIVE_CACHE
+        return _STATUS_CACHE_ONLY
+    if session_klids is not None and klid not in session_klids and in_settings:
+        return _STATUS_NOT_SWITCHABLE
+    return _STATUS_IN_LIST
 
 
 # ---------------------------------------------------------------------------
@@ -1114,18 +1165,23 @@ class KeyboardLayoutCleaner(ctk.CTk):
         """Построить кликабельный список найденных раскладок."""
         if not self.layouts_list_frame:
             return
+        # Список раскладок сессии читаем один раз на ВСЕ строки: это дешёвый
+        # Win32-вызов, но повторять его для каждой строки незачем.
+        session_klids = get_session_layout_klids()
         # Пересоздаём строки списка (включая плейсхолдер)
         for child in self.layouts_list_frame.winfo_children():
             child.destroy()
         self._layout_row_buttons.clear()
         for klid in sorted(self.layouts_data):
             count = len(self.layouts_data[klid])
+            status = _t(_layout_status_key(klid, self.layouts_data, session_klids))
             row = ctk.CTkButton(
                 self.layouts_list_frame,
                 text=_t(
                     theme.row_text_key(),
                     name=_build_layout_name(klid),
                     count=count,
+                    status=status,
                 ),
                 anchor="w",
                 height=theme.N("h_row"),
@@ -1354,6 +1410,18 @@ class KeyboardLayoutCleaner(ctk.CTk):
                 "sub",
             ),
         ]
+        # FIX-34: исходные коды, которыми Windows записала эту раскладку.
+        # Строка списка показывает канонический KLID, а в реестре лежат и
+        # десятичные HKL (68748313), и TIP-строки (0419:00000419) — их видно
+        # только здесь, и именно по ним видно, что запись появилась из CTF,
+        # а не из списка языков.
+        forms = list(dict.fromkeys(str(loc.get("form", "")) for loc in locations))
+        if len(forms) > 1 or (forms and forms[0] != klid):
+            chunks.append(
+                (_t("details_forms", forms=", ".join(forms)) + "\n", "sub")
+            )
+        status = _t(_layout_status_key(klid, self.layouts_data))
+        chunks.append((_t("details_status", status=status) + "\n", "sub"))
         if _active_lang_cache(klid, self.layouts_data):
             chunks.append((_t("details_active_cache") + "\n\n", "warn"))
         chunks.append((divider + "\n", "dim"))

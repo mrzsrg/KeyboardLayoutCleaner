@@ -643,6 +643,14 @@ def _branch_value_matches(
         return layout_ids.substitutes_value_matches(
             name, val_l, layout_ids.klid_hex_forms(variants_hint)
         )
+    # HKL-формы в CTF (FIX-34). Сканер показывает такую запись в строке её
+    # KLID, значит и план обязан находить её по этому же KLID — иначе строка
+    # врёт: «запись найдена», а удаление её не тронет. Проверка по младшему
+    # слову: 0x04190419 и 0x04090419 — одна и та же раскладка, разные типы
+    # клавиатуры. Прямые ветки сюда не попадают (в Preload/Substitutes HKL
+    # не пишется), а substitutes выше уже вышел.
+    if layout_ids.hkl_matches_klid(val_l, variants):
+        return True
     parts = [p.strip().lower() for p in val.split("\\")]
     if (
         name.strip().lower() in variants

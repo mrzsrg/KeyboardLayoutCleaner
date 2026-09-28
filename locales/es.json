@@ -12,7 +12,7 @@
   "btn_rescan_busy": "⏳ Actualizando...",
   "list_title_found": "Distribuciones encontradas ({count}) — pulsa una fila:",
   "list_title_empty": "Distribuciones encontradas: ninguna",
-  "list_row": "⌨  {name}   ·   entradas: {count}",
+  "list_row": "⌨  {name}   ·   {status}   ·   entradas: {count}",
   "details_title": "Ramas del registro: estado de detección",
   "details_layout": "Distribución: {name}",
   "details_klid": "KLID: {klid}  ·  entradas totales encontradas: {count}",
@@ -183,10 +183,17 @@
   "brightness_bright": "◐ Brillante (130 %)",
   "brightness_ultra": "◐ Muy claro (165 %)",
   "status_busy_wait": "⏳ Espera a que termine la operación en curso",
-  "list_row_terminal": "[KBD] {name}  |  entradas: {count}",
+  "list_row_terminal": "[KBD] {name}  |  {status}  |  entradas: {count}",
   "dlg_elevation_association": "El archivo no está asociado a ninguna aplicación, por lo que Windows no puede iniciarlo.\nEjecuta el ejecutable original, no una copia renombrada.",
   "dlg_switcher_absent": "\nEl selector no contiene las distribuciones que sí están en la configuración: {klids}. Están instaladas pero no funcionan.",
   "dlg_switcher_session_stale": "\nEl selector aún muestra distribuciones que se quitaron de la configuración: {klids}. La eliminación funcionó, pero el selector conserva la lista anterior.",
   "dlg_switcher_signout_advice": "\nCierre sesión y vuelva a entrar: el selector de teclado solo se actualiza al iniciar sesión. Ni reiniciar el servicio de entrada ni volver a sincronizar la lista lo actualizan — verificado en una máquina real. La discrepancia persiste hasta que vuelva a entrar.",
-  "dlg_switcher_ctf_note": "\nPara referencia: la caché del servicio de entrada (CTF) no tiene rama para: {klids}. No es un fallo — las distribuciones simples no la necesitan y funcionan bien en el selector."
+  "dlg_switcher_ctf_note": "\nPara referencia: la caché del servicio de entrada (CTF) no tiene rama para: {klids}. No es un fallo — las distribuciones simples no la necesitan y funcionan bien en el selector.",
+  "layout_name_unknown": "disposición desconocida ({klid})",
+  "status_in_list": "en la lista de idiomas",
+  "status_cache_only": "solo en la caché de CTF: probable resto",
+  "status_active_cache": "probablemente la caché de una disposición activa",
+  "status_not_switchable": "en la configuración, pero no se puede cambiar",
+  "details_forms": "En el registro: {forms}",
+  "details_status": "Estado: {status}"
 }

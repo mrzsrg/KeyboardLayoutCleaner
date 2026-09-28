@@ -288,7 +288,7 @@ class TestScanBranchRecursive:
             found = scanner._scan_branch_recursive(
                 scanner.winreg.HKEY_CURRENT_USER, "T"
             )
-        assert any(v == "00000419" for _, v in found)
+        assert any(v == "00000419" for _, v, _form in found)
 
     def test_tip_format(self, fake_winreg):
         fake_winreg.set(
@@ -300,7 +300,7 @@ class TestScanBranchRecursive:
             found = scanner._scan_branch_recursive(
                 scanner.winreg.HKEY_CURRENT_USER, "T2"
             )
-        assert any(v == "00000809" for _, v in found)
+        assert any(v == "00000809" for _, v, _form in found)
 
     def test_missing_branch(self, fake_winreg):
         with _install_fake_winreg(fake_winreg):
@@ -320,7 +320,7 @@ class TestScanBranchRecursive:
             found = scanner._scan_branch_recursive(
                 scanner.winreg.HKEY_CURRENT_USER, "T3"
             )
-        assert any(v == "00000409" for _, v in found)
+        assert any(v == "00000409" for _, v, _form in found)
 
     def test_features_to_install_metadata_not_klid(self, fake_winreg):
         """FeaturesToInstall=000006ff — метаданные профиля, а НЕ раскладка.
@@ -342,7 +342,7 @@ class TestScanBranchRecursive:
             found = scanner._scan_branch_recursive(
                 scanner.winreg.HKEY_CURRENT_USER, "T4"
             )
-        klids = [v for _, v in found]
+        klids = [v for _, v, _form in found]
         assert "000006ff" not in klids
         assert "00000809" in klids
 
@@ -367,7 +367,7 @@ class TestScanBranchRecursive:
             found = scanner._scan_branch_recursive(
                 scanner.winreg.HKEY_CURRENT_USER, "T4b"
             )
-        klids = [v for _, v in found]
+        klids = [v for _, v, _form in found]
         assert "000006ff" not in klids
         assert "00000809" in klids
 
@@ -399,14 +399,30 @@ class TestGetLayoutName:
         assert name == "ru-RU"
 
     def test_unknown_layout(self, fake_winreg):
+        # FIX-34: неизвестная раскладка возвращает пустую строку, а не
+        # «Layout (d001dead)». Слово «Layout» выглядело названием раскладки,
+        # но им не было — и главное, по нему нельзя было отличиить фантом от
+        # раскладки, для которой просто не нашлось имени. Понятную пометку
+        # подставляет GUI (main._build_layout_name).
         with _install_fake_winreg(fake_winreg):
             name = scanner.get_layout_name("d001dead")
-        assert name == "Layout (d001dead)"
+        assert name == ""
 
     def test_uppercase_normalized(self, fake_winreg):
         with _install_fake_winreg(fake_winreg):
             name = scanner.get_layout_name("D001DEAD")
-        assert name == "Layout (d001dead)"
+        assert name == ""
+
+    def test_hkl_form_resolves_to_layout_name(self, fake_winreg):
+        """HKL-форма 0x04070407 должна находить ту же немецкую раскладку.
+
+        Раньше в каталоге Windows искалось «04070407», которого там нет, —
+        отсюда и появилась строка «Layout (04070407)».
+        """
+        with _install_fake_winreg(fake_winreg):
+            assert scanner.get_layout_name("04070407") == scanner.get_layout_name(
+                "00000407"
+            )
 
 
 class TestParseLanguageEntries:

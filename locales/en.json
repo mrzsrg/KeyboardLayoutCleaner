@@ -12,7 +12,7 @@
   "btn_rescan_busy": "⏳ Refreshing...",
   "list_title_found": "Found layouts ({count}) — click a row:",
   "list_title_empty": "Found layouts: none",
-  "list_row": "⌨  {name}   ·   entries: {count}",
+  "list_row": "⌨  {name}   ·   {status}   ·   entries: {count}",
   "details_title": "Registry branches: detection status",
   "details_layout": "Layout: {name}",
   "details_klid": "KLID: {klid}  ·  total entries found: {count}",
@@ -183,10 +183,17 @@
   "brightness_bright": "◐ Bright (130%)",
   "brightness_ultra": "◐ Ultra (165%)",
   "status_busy_wait": "⏳ Wait for the current operation to finish",
-  "list_row_terminal": "[KBD] {name}  |  entries: {count}",
+  "list_row_terminal": "[KBD] {name}  |  {status}  |  entries: {count}",
   "dlg_elevation_association": "The file is not associated with any application, so Windows cannot start it.\nRun the original executable, not a renamed copy.",
   "dlg_switcher_absent": "\nThe switcher is missing layouts that are present in your settings: {klids}. They are installed but do not work.",
   "dlg_switcher_session_stale": "\nThe switcher still shows layouts that were removed from your settings: {klids}. The removal worked, but the switcher is showing the previous set.",
   "dlg_switcher_signout_advice": "\nSign out and back in: the layout switcher only refreshes at sign-in. Restarting the input service and re-syncing the list do not update it — verified on a real machine. The mismatch persists until you re-sign-in.",
-  "dlg_switcher_ctf_note": "\nFor reference: the input service cache (CTF) has no branch for: {klids}. This is not a fault — simple layouts do not need one and work fine in the switcher."
+  "dlg_switcher_ctf_note": "\nFor reference: the input service cache (CTF) has no branch for: {klids}. This is not a fault — simple layouts do not need one and work fine in the switcher.",
+  "layout_name_unknown": "unknown layout ({klid})",
+  "status_in_list": "in the language list",
+  "status_cache_only": "CTF cache only — likely leftover",
+  "status_active_cache": "likely the cache of an active layout",
+  "status_not_switchable": "in settings, but not switchable",
+  "details_forms": "In the registry: {forms}",
+  "details_status": "Status: {status}"
 }

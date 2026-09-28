@@ -903,9 +903,19 @@ class TestScanCleanParity:
         # HKU .DEFAULT (админ-контекст)
         assert "1" in self._plan_hits(plan, self.BR_HKU)
 
-        # HKL-форма той же раскладки: сканер находит CTF-запись под
-        # 04190419, и cleaner plan(04190419) её же и удаляет (паритет).
-        assert scan["04190419"], "сканер потерял HKL-форму"
+        # HKL-форма той же раскладки (FIX-34). Запись CTF лежит в реестре
+        # как 68748313 = 0x04190419, и РАНЬШЕ сканер выдавал её отдельной
+        # строкой «04190419» — второй раз та же раскладка, без имени.
+        # Теперь она входит в строку 00000419, а исходный код сохранён.
+        assert "04190419" not in scan, "HKL-форма снова отделилась в свою строку"
+        hkl_records = [loc for loc in scan["00000419"] if "AssemblyItem" in loc["value"]]
+        assert hkl_records, "сканер потерял HKL-запись CTF"
+        hkl_dec = str((0x419 << 16) | 0x419)
+        assert [loc["form"] for loc in hkl_records] == [hkl_dec], hkl_records
+        # Паритет: план для канонического KLID покрывает и эту запись —
+        # иначе объединение строк было бы враньём (нашли, но не почистили).
+        assert any("AssemblyItem" in h for h in self._plan_hits(plan, self.BR_CTF))
+        # HKL-форма остаётся рабочим входом для планирования
         plan_hkl = cleaner.plan_layout_removal("04190419")
         assert self._plan_hits(plan_hkl, self.BR_CTF), plan_hkl["branches"]
         # При этом HKL-план не трогает чужие ветки (симметрия скан/план)
@@ -959,10 +969,16 @@ class TestScanCleanParity:
             for p in result["ctf_profiles_deleted"]
         ), result["ctf_profiles_deleted"]
 
-        # Скан после очистки: целевой и HKL-формы исчезли
+        # Скан после очистки: целевой KLID исчез ВМЕСТЕ с его HKL-записью
+        # (FIX-34: раньше проверяли отдельную строку «04190419»)
         scan_after = scanner.scan_keyboard_layouts()
         assert "00000419" not in scan_after
         assert "04190419" not in scan_after
+        hkl_dec = str((0x419 << 16) | 0x419)
+        assert not [
+            loc for locs in scan_after.values() for loc in locs
+            if loc.get("form") == hkl_dec
+        ], "HKL-запись CTF пережила очистку"
         # Чужие значения уцелели
         assert "0000040c" in scan_after
         assert "00000409" in scan_after
@@ -1064,18 +1080,30 @@ class TestScanCleanParity:
         )
         self._patch(monkeypatch, fake)
 
-        # Нормальный режим: сканер и план видят запись.
-        assert scanner.scan_keyboard_layouts().get("04190419")
-        plan_ok = cleaner.plan_layout_removal("04190419")
-        assert self._plan_hits(plan_ok, self.BR_CTF)
+        # Нормальный режим: сканер и план видят запись. Сканер кладёт её в
+        # строку KLID (FIX-34), и план по этому же KLID обязан её покрыть —
+        # именно это и проверяет тест: обе стороны говорят об одном KLID.
+        scan = scanner.scan_keyboard_layouts()
+        assert scan.get("00000419"), scan
+        assert scan["00000419"][0]["form"] == hkl_decimal
+        plan_ok = cleaner.plan_layout_removal("00000419")
+        assert self._plan_hits(plan_ok, self.BR_CTF), plan_ok["branches"]
 
-        # Подмена ТОЛЬКО в cleaner → расхождение: сканер находит, план нет.
+        # Подмена предикатов очистки → расхождение: сканер находит, план нет.
+        # С FIX-34 запись в CTF опознаётся ДВУМЯ независимыми способами:
+        # набором вариантов и сверкой HKL по младшему слову. Поэтому дрейф
+        # воспроизводится только когда сломаны оба — иначе тест проверял бы
+        # несуществующий дефект. Смысл теста прежний: паритет способен
+        # падать, когда очистка слепнет.
         monkeypatch.setattr(
             mutate, "_klid_variants", lambda klid: {klid.strip().lower()}
         )
-        plan_blind = cleaner.plan_layout_removal("04190419")
+        monkeypatch.setattr(
+            mutate.layout_ids, "hkl_matches_klid", lambda value, klids: False
+        )
+        plan_blind = cleaner.plan_layout_removal("00000419")
         assert not self._plan_hits(plan_blind, self.BR_CTF)
-        assert scanner.scan_keyboard_layouts().get("04190419")
+        assert scanner.scan_keyboard_layouts().get("00000419")
 
     def test_parity_metadata_names_shared_between_modules(self):
         """Фильтр метаданных языкового профиля — тоже общее знание.

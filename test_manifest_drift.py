@@ -314,8 +314,13 @@ class TestRecursiveRemainingScan:
             remaining = cleaner._find_remaining_values(
                 [("HKCU", "Software\\Microsoft\\CTF", "preload", False)], klid, False
             )
-        assert len(remaining) == 1
-        assert "профиль TSF" in remaining[0]
+        assert len(remaining) == 2
+        # Профильный ключ CTF и значение HKL внутри него — оба остались, оба
+        # и найдены. Раньше второе не попадало в остаток: предикат не знал
+        # HKL-форм, и «осталось» показывалось меньше, чем на самом деле
+        # (FIX-34). Снимок «до» считает оба, поэтому дрейф не ломается.
+        assert any("профиль TSF" in item for item in remaining)
+        assert any("KeyboardLayout" in item for item in remaining)
 
     def test_remaining_values_are_deduplicated(self):
         """User Profile обходится дважды (ветка + языковой профиль) — остаток
@@ -614,7 +619,12 @@ class TestDeleteLayoutManifestIntegration:
         # Манифест существует УЖЕ в момент мутации и содержит состояние ДО неё:
         # 1 значение в Preload + 1 профильный ключ CTF.
         assert observed["manifest_at_wipe"] == result["manifest_path"]
-        assert observed["snapshot_at_wipe"]["snapshot"]["total_values"] == 2
+        # 1 значение в Preload + 1 профильный ключ CTF + 1 значение HKL ВНУТРИ
+        # профиля. Последнее раньше не попадало в снимок: предикат не знал
+        # HKL-форм, и манифест занижал то, к чему прикасается удаление
+        # (FIX-34). Снимок и проверка остатка используют один предикат,
+        # поэтому дрейф по-прежнему сходится в ноль.
+        assert observed["snapshot_at_wipe"]["snapshot"]["total_values"] == 3
         preload_left = fake.nodes[(fake.HKEY_CURRENT_USER, self.PRELOAD)]["v"]
         assert set(preload_left) == {"1"}
 
@@ -628,10 +638,12 @@ class TestDeleteLayoutManifestIntegration:
             result = cleaner.delete_layout(self.KLID)
 
         assert result["plan_drift"]
-        assert result["plan_drift"][0] == "2"  # планировалось 2 записи
+        # Планировалось 3 записи: Preload, профильный ключ CTF и значение HKL
+        # внутри профиля (FIX-34 — раньше последнее не считалось).
+        assert result["plan_drift"][0] == "3"
         assert result["plan_drift"][1] == "0"  # фактически удалено 0
         remaining = result["plan_drift"][2:]
-        assert len(remaining) == 2
+        assert len(remaining) == 3
         assert any("Preload" in item for item in remaining)
         assert any("профиль TSF" in item for item in remaining)
 

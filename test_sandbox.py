@@ -156,7 +156,9 @@ class TestScannerDryRun(SandboxTestCase):
     def test_hex_to_name_mapping(self) -> None:
         name = scanner.get_layout_name("00000409")
         assert "Layout (" not in name  # есть в HKLM на любой Windows
-        assert scanner.get_layout_name(PHANTOM_KLID) == "Layout (" + PHANTOM_KLID + ")"
+        # FIX-34: для неизвестной раскладки возвращается пустая строка, а не
+        # «Layout (KLID)» — слово «Layout» выглядело названием, но им не было
+        assert scanner.get_layout_name(PHANTOM_KLID) == ""
 
     def test_missing_branches_do_not_crash(self) -> None:
         missing = TEST_ROOT + "\\Definitely\\Missing\\Branch"
@@ -398,7 +400,10 @@ class TestScannerDeepScan(SandboxTestCase):
         found = scanner._scan_branch_recursive(
             winreg.HKEY_CURRENT_USER, TEST_ROOT + "\\ScanRec"
         )
-        assert ("A\\B\\C\\KeyboardLayout", "d001dead") in found
+        assert ("A\\B\\C\\KeyboardLayout", "d001dead", "d001dead") in found
+        # Ветка вне CTF: восьмизначный токен d001dead остаётся СВОИМ.
+        # Это фантом, а не HKL — сворачивать его в 0000dead нельзя,
+        # иначе потеряется имя раскладки (FIX-34).
 
     def test_recursive_scan_tip_format(self) -> None:
         with winreg.CreateKeyEx(
@@ -413,7 +418,9 @@ class TestScannerDeepScan(SandboxTestCase):
         found = scanner._scan_branch_recursive(
             winreg.HKEY_CURRENT_USER, TEST_ROOT + "\\ScanRec2"
         )
-        assert ("Sub\\InputMethodOverride", "00000809") in found
+        # TIP-форма: в реестре «0809:00000809», в списке — 00000809,
+        # исходная строка сохранена в form (FIX-34)
+        assert ("Sub\\InputMethodOverride", "00000809", "0809:00000809") in found
 
     def test_recursive_scan_missing_branch(self) -> None:
         assert (
@@ -639,18 +646,28 @@ class TestCtfProfileCleanup(SandboxTestCase):
 
     def test_scanner_normalizes_decimal_hkl_and_reaches_depth5(self) -> None:
         base = self._build_ctf_sim()
-        found = dict(scanner._scan_branch_recursive(winreg.HKEY_CURRENT_USER, base))
-        # decimal KeyboardLayout приведён к каноническому hex-KLID
-        assert (
-            found.get(f"Assemblies\\0x00000419\\{self.PHANTOM_GUID}\\KeyboardLayout")
-            == "04190419"
+        # FIX-34: возврат — тройки (путь, KLID для группировки, исходный токен)
+        found = dict(
+            (rel, (group, form))
+            for rel, group, form in scanner._scan_branch_recursive(
+                winreg.HKEY_CURRENT_USER, base
+            )
         )
-        # значение на глубине 5 (...\{GUID}\00000000\KLID) теперь видно
+        # decimal KeyboardLayout свернут к KLID (HKL 0x04190419 = русская),
+        # а исходное число 68748313 сохранено в form — его и чистит план
+        phantom_path = f"Assemblies\\0x00000419\\{self.PHANTOM_GUID}\\KeyboardLayout"
+        assert found[phantom_path] == ("00000419", "68748313")
+        # значение на глубине 5 (...\{GUID}\00000000\KLID) теперь видно.
+        # Ветка CTFsim — соглашение CTF, поэтому HKL свёрнут, а 8-HEX
+        # исходник сохранён.
         deep_path = (
             f"SortOrder\\AssemblyItem\\0x00000419\\{self.DEEP_GUID}\\00000000\\KLID"
         )
         assert deep_path in found
-        assert found[deep_path] == "04190419"
+        assert found[deep_path] == ("00000419", "04190419")
+        # легитимный сосед 0x00000409 — уже KLID, сворачивать нечего
+        legit_path = f"Assemblies\\0x00000419\\{self.LEGIT_GUID}\\KeyboardLayout"
+        assert found[legit_path] == ("00000409", "1033")
 
     def test_profile_keys_deleted_entirely(self) -> None:
         base = self._build_ctf_sim()

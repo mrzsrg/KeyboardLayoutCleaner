@@ -27,6 +27,7 @@ from layout_ids import (
 )
 from layout_ids import (
     LAYOUT_MAP,
+    hkl_to_klid,
 )
 from layout_ids import (
     METADATA_VALUE_NAMES as _METADATA_VALUE_NAMES,
@@ -367,7 +368,7 @@ def _klid_matches_value(layout_klid: str, value: str) -> bool:
 
 def _scan_branch_recursive(
     root_key: int, subkey_path: str, max_depth: int = 6
-) -> list[tuple[str, str]]:
+) -> list[tuple[str, str, str]]:
     """
     Рекурсивно найти в поддереве значения, содержащие KLID.
 
@@ -378,10 +379,20 @@ def _scan_branch_recursive(
 
     Returns
     -------
-    list[tuple[str, str]]
-        Пары ``(относительный путь\\имя значения, klid)``.
+    list[tuple[str, str, str]]
+        Тройки ``(относительный путь\\имя значения, klid для группировки,
+        исходный токен как он лежит в реестре)``.
+
+    FIX-34: klid и исходный токен разведены НАМЕРЕННО. В CTF значение
+    ``KeyboardLayout`` — это HKL (0x04190419 = русская), и раньше оно
+    группировалось отдельно от ``00000419``, из-за чего одна раскладка
+    показывалась в списке дважды, а вторая строка оставалась без имени.
+    Теперь записи собираются в одну строку по KLID, а исходный токен
+    сохраняется: он и есть доказательство, и по нему видно, что именно
+    Windows записала в реестр. Ничего не теряется — все разделы и все
+    значения остаются видимыми в подробностях.
     """
-    found: list[tuple[str, str]] = []
+    found: list[tuple[str, str, str]] = []
 
     def _walk(key_path: str, depth: int) -> None:
         if depth > max_depth:
@@ -422,7 +433,19 @@ def _scan_branch_recursive(
                                 break
                     if klid:
                         rel = key_path[len(subkey_path) :].lstrip("\\")
-                        found.append((f"{rel}\\{name}" if rel else name, klid))
+                        # HKL — это соглашение ветки CTF: там Windows пишет
+                        # HKL (68748313 или 04190419), а не KLID. Сворачиваем
+                        # его к KLID, иначе одна и та же раскладка попадёт в
+                        # список дважды, а вторая строка останется без имени.
+                        # Десятичное значение — тоже HKL, где бы ни лежало.
+                        # Вне CTF 8-HEX не трогаем: фантом вида d001dead обязан
+                        # сохранить собственное имя. Исходный токен уходит в
+                        # подробности, поэтому запись не теряется.
+                        is_hkl = bool(re.fullmatch(r"[0-9]{3,10}", raw)) or (
+                            "ctf" in subkey_path.lower() and hkl_to_klid(klid) != klid
+                        )
+                        group = hkl_to_klid(klid) if is_hkl else klid
+                        found.append((f"{rel}\\{name}" if rel else name, group, raw))
                 sub_idx = 0
                 while True:
                     try:
@@ -439,29 +462,45 @@ def _scan_branch_recursive(
 
 
 def _resolve_name(hex_code: str) -> str:
-    """Получить человеко-читаемое название для HEX-кода раскладки."""
-    # 1. Попробовать через HKLM (Layout Text)
-    try:
-        with (
-            winreg.OpenKey(
-                winreg.HKEY_LOCAL_MACHINE,
-                "SYSTEM\\CurrentControlSet\\Control\\Keyboard Layouts",
-            ) as layouts_key,
-            winreg.OpenKey(layouts_key, hex_code) as layout_key,
-        ):
-            name, _ = winreg.QueryValueEx(layout_key, "Layout Text")
-            return str(name)
-    except FileNotFoundError:
-        pass
-    except OSError:
-        pass
+    """Человеко-читаемое название раскладки; "" если имя неизвестно.
+
+    FIX-34: пробуем и HKL-форму, и свёрнутую KLID. Раньше ``04070407``
+    искался в каталоге Windows как есть, а там лежит ``00000407``, —
+    и пользователь получал «Layout (04070407)»: строка выглядела названием
+    раскладки, но им не была. Теперь такая запись ищется как ``00000407``
+    и получает настоящее имя.
+
+    Пустая строка означает «имени нет» — вызывающий код подставляет
+    честную пометку о неизвестной раскладке (см. main._build_layout_name).
+    """
+    code = hex_code.strip().lower()
+    candidates = [code]
+    collapsed = hkl_to_klid(code)
+    if collapsed != code:
+        candidates.append(collapsed)
+
+    # 1. Каталог Windows (HKLM\...\Keyboard Layouts\<KLID> -> "Layout Text")
+    for candidate in candidates:
+        try:
+            with (
+                winreg.OpenKey(
+                    winreg.HKEY_LOCAL_MACHINE,
+                    "SYSTEM\\CurrentControlSet\\Control\\Keyboard Layouts",
+                ) as layouts_key,
+                winreg.OpenKey(layouts_key, candidate) as layout_key,
+            ):
+                name, _ = winreg.QueryValueEx(layout_key, "Layout Text")
+                if name:
+                    return str(name)
+        except OSError:
+            continue
 
     # 2. Fallback: ищем по LAYOUT_MAP
-    for tag, code in LAYOUT_MAP.items():
-        if code == hex_code:
+    for tag, mapped in LAYOUT_MAP.items():
+        if mapped in candidates:
             return tag
 
-    return f"Layout ({hex_code})"
+    return ""
 
 
 def get_layout_name(hex_code: str) -> str:
@@ -580,6 +619,18 @@ def _get_switcher_klids() -> set[str] | None:
         low = hkl & 0xFFFF
         klids.add(f"{0x0000_0000 | low:08x}")
     return klids
+
+
+def get_session_layout_klids() -> set[str] | None:
+    """Публичная обёртка: KLID раскладок, доступных ПРЯМО СЕЙЧАС.
+
+    Нужна GUI, чтобы подписать строку результата скана («в списке языков»
+    или «в настройках, но не переключается») — FIX-34. Вызов дешёвый:
+    это прямой Win32-вызов, а не PowerShell, и в списке он делается один
+    раз на все строки. ``None`` — состояние прочитать не удалось; вызывающий
+    обязан отличать его от «раскладок нет» (см. :func:`_get_switcher_klids`).
+    """
+    return _get_switcher_klids()
 
 
 def check_switcher_consistency() -> dict[str, list[str]]:
@@ -737,10 +788,10 @@ def _scan_hkcu_branches(ensure_layout, add_location) -> None:
         # Ветки, где данные лежат в подключах (CTF, User Profile):
         # рекурсивный скан поддерева в дополнение к прямым значениям
         if subkey_path in _RECURSIVE_SCAN:
-            for rel, klid in _scan_branch_recursive(
+            for rel, klid, form in _scan_branch_recursive(
                 winreg.HKEY_CURRENT_USER, subkey_path
             ):
-                add_location(klid, f"HKCU\\{subkey_path}", f"{rel}={klid}")
+                add_location(klid, f"HKCU\\{subkey_path}", f"{rel}={form}", form)
 
 
 def _scan_hklm_branches(add_location) -> None:
@@ -767,7 +818,7 @@ def _scan_hku_branches(add_location) -> None:
                 add_location(klid, f"HKU\\{subkey_path}", klid)
 
 
-def _scan_powershell_languages(layout_map, ensure_layout) -> None:
+def _scan_powershell_languages(add_location) -> None:
     """Добавить раскладки из Get-WinUserLanguageList (PowerShell)."""
     pw_langs = _get_language_list_from_powershell()
     for entry in pw_langs:
@@ -775,14 +826,15 @@ def _scan_powershell_languages(layout_map, ensure_layout) -> None:
         tag = entry.get("LanguageTag", "")
         if not klid:
             continue
-        # LAYOUT_MAP намеренно не мутируется во время скана:
-        # запись в глобальный словарь из рабочего потока = гонка с GUI
-        ensure_layout(klid)
-        layout_map[klid]["locations"].append(
-            {
-                "path": "PowerShell\\Get-WinUserLanguageList",
-                "value": f"LanguageTag={tag}, KLID={klid}",
-            }
+        # add_location, а не прямая правка layout_map: LAYOUT_MAP намеренно
+        # не мутируется во время скана (запись в глобальный словарь из
+        # рабочего потока = гонка с GUI), а запись обязана получить поле
+        # form — по нему подробности группируют записи по исходной форме.
+        add_location(
+            klid,
+            "PowerShell\\Get-WinUserLanguageList",
+            f"LanguageTag={tag}, KLID={klid}",
+            klid,
         )
 
 
@@ -791,12 +843,22 @@ def scan_keyboard_layouts() -> dict[str, list[dict[str, str]]]:
     Просканировать реестр Windows (HKCU, HKLM, HKU) и PowerShell,
     собрать все найденные раскладки клавиатуры и их пути.
 
+    FIX-34: ключ словаря — канонический KLID раскладки, а не сырой токен
+    из реестра. Одна раскладка = одна строка, сколько бы раз Windows ни
+    записала её в разные ветки. Сырой код не выбрасывается: он лежит в
+    поле ``form`` и показывается в подробностях, поэтому «откуда взялась
+    запись» остаётся проверяемым.
+
     Returns:
         Словарь вида::
 
             {
                 "<KLID_HEX>": [
-                    {"path": "HKCU\\...", "value": "..."},
+                    {
+                        "path": "HKCU\\...",
+                        "value": "...",
+                        "form": "исходный токен из реестра",
+                    },
                     ...
                 ],
                 ...
@@ -812,10 +874,14 @@ def scan_keyboard_layouts() -> dict[str, list[dict[str, str]]]:
                 "locations": [],
             }
 
-    def _add_location(klid: str, path: str, value: str) -> None:
-        """Добавить путь в locations."""
+    def _add_location(
+        klid: str, path: str, value: str, form: str | None = None
+    ) -> None:
+        """Добавить путь в locations, запомнив исходную форму токена."""
         _ensure_layout(klid)
-        layout_map[klid]["locations"].append({"path": path, "value": value})
+        layout_map[klid]["locations"].append(
+            {"path": path, "value": value, "form": form or klid}
+        )
 
     _scan_hkcu_branches(_ensure_layout, _add_location)
     _scan_hklm_branches(_add_location)
@@ -823,7 +889,7 @@ def scan_keyboard_layouts() -> dict[str, list[dict[str, str]]]:
     if not is_sandbox_enabled():
         # В sandbox PowerShell-источник не изолирован: Get-WinUserLanguageList
         # вернул бы ЖИВОЙ список пользователя (мимо sandbox-ключа) — пропускаем.
-        _scan_powershell_languages(layout_map, _ensure_layout)
+        _scan_powershell_languages(_add_location)
 
     # ------------------------------------------------------------------
     # Сортировка результатов по klid
@@ -831,7 +897,11 @@ def scan_keyboard_layouts() -> dict[str, list[dict[str, str]]]:
     sorted_map: dict[str, list[dict[str, str]]] = {}
     for klid in sorted(layout_map.keys()):
         sorted_map[klid] = [
-            {"path": loc["path"], "value": loc["value"]}
+            {
+                "path": loc["path"],
+                "value": loc["value"],
+                "form": loc["form"],
+            }
             for loc in layout_map[klid]["locations"]
         ]
 

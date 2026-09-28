@@ -12,7 +12,7 @@
   "btn_rescan_busy": "⏳ Atualizando...",
   "list_title_found": "Layouts encontrados ({count}) — clique numa linha:",
   "list_title_empty": "Layouts encontrados: nenhum",
-  "list_row": "⌨  {name}   ·   entradas: {count}",
+  "list_row": "⌨  {name}   ·   {status}   ·   entradas: {count}",
   "details_title": "Ramos do Registro: status de detecção",
   "details_layout": "Layout: {name}",
   "details_klid": "KLID: {klid}  ·  entradas encontradas: {count}",
@@ -165,7 +165,7 @@
   "brightness_bright": "◐ Brilhante (130%)",
   "brightness_ultra": "◐ Máxima (165%)",
   "status_busy_wait": "⏳ Aguarde a conclusão da operação atual",
-  "list_row_terminal": "[KBD] {name}  |  entradas: {count}",
+  "list_row_terminal": "[KBD] {name}  |  {status}  |  entradas: {count}",
   "dlg_elevation_uac_cancelled": "Operação cancelada: o aviso UAC foi recusado (código 1223).",
   "dlg_elevation_elevation_required": "Elevação bloqueada (código 740): a política do sistema impede iniciar processos elevados.\nExecute o app num console de administrador.",
   "dlg_invalid_klid": "Formato KLID inválido: {klid}\n\nEsperado 8 caracteres HEX (ex.: 00000419).",
@@ -188,5 +188,12 @@
   "dlg_switcher_absent": "\nO seletor não contém os layouts que estão nas configurações: {klids}. Estão instalados, mas não funcionam.",
   "dlg_switcher_session_stale": "\nO seletor ainda mostra layouts que foram removidos das configurações: {klids}. A remoção funcionou, mas o seletor mantém a lista anterior.",
   "dlg_switcher_signout_advice": "\nTermine a sessão e entre novamente: o seletor de teclado só atualiza no início de sessão. Nem reiniciar o serviço de entrada nem sincronizar a lista novamente atualizam — verificado em uma máquina real. A divergência persiste até você entrar de novo.",
-  "dlg_switcher_ctf_note": "\nPara referência: o cache do serviço de entrada (CTF) não tem ramo para: {klids}. Não é uma falha — layouts simples não precisam dele e funcionam bem no seletor."
+  "dlg_switcher_ctf_note": "\nPara referência: o cache do serviço de entrada (CTF) não tem ramo para: {klids}. Não é uma falha — layouts simples não precisam dele e funcionam bem no seletor.",
+  "layout_name_unknown": "layout desconhecido ({klid})",
+  "status_in_list": "na lista de idiomas",
+  "status_cache_only": "apenas no cache do CTF — provavelmente resíduo",
+  "status_active_cache": "provavelmente o cache de um layout ativo",
+  "status_not_switchable": "nas configurações, mas não alternável",
+  "details_forms": "No registro: {forms}",
+  "details_status": "Estado: {status}"
 }

@@ -12,7 +12,7 @@
   "btn_rescan_busy": "⏳ 正在刷新...",
   "list_title_found": "找到的布局（{count}）——点击行选择：",
   "list_title_empty": "找到的布局：无",
-  "list_row": "⌨  {name}   ·   条目：{count}",
+  "list_row": "⌨  {name}   ·   {status}   ·   条目：{count}",
   "details_title": "注册表分支：检测结果",
   "details_layout": "布局：{name}",
   "details_klid": "KLID：{klid}  ·  找到条目：{count}",
@@ -165,7 +165,7 @@
   "brightness_bright": "◐ 明亮 (130%)",
   "brightness_ultra": "◐ 最亮 (165%)",
   "status_busy_wait": "⏳ 请等待当前操作完成",
-  "list_row_terminal": "[KBD] {name}  |  条目: {count}",
+  "list_row_terminal": "[KBD] {name}  |  {status}  |  条目: {count}",
   "dlg_elevation_uac_cancelled": "操作已取消：UAC 提示被拒绝（代码 1223）。",
   "dlg_elevation_elevation_required": "提权被阻止（代码 740）：系统策略禁止启动提升的进程。\n请从管理员控制台运行应用。",
   "dlg_invalid_klid": "无效的 KLID 格式：{klid}\n\n需要 8 个十六进制字符（例如 00000419）。",
@@ -188,5 +188,12 @@
   "dlg_switcher_absent": "\n切换列表中缺少设置里存在的键盘布局：{klids}。它们已安装，但无法使用。",
   "dlg_switcher_session_stale": "\n切换列表中仍显示已从设置中删除的键盘布局：{klids}。删除已生效，但列表仍显示旧的内容。",
   "dlg_switcher_signout_advice": "\n退出登录后重新登录：键盘切换列表只在登录时刷新。既重启输入服务，也不再同步列表都无法更新它——已在真实机器上验证。在重新登录之前差异会保留。",
-  "dlg_switcher_ctf_note": "参考：输入服务缓存（CTF）中没有对应的分支：{klids}。这不是故障：简单布局不需要它，并且在切换列表中可正常使用。"
+  "dlg_switcher_ctf_note": "参考：输入服务缓存（CTF）中没有对应的分支：{klids}。这不是故障：简单布局不需要它，并且在切换列表中可正常使用。",
+  "layout_name_unknown": "未知键盘布局（{klid}）",
+  "status_in_list": "在语言列表中",
+  "status_cache_only": "仅存在于 CTF 缓存 — 疑似残留",
+  "status_active_cache": "可能是活动布局的缓存",
+  "status_not_switchable": "在设置中，但无法切换",
+  "details_forms": "注册表中的原始代码：{forms}",
+  "details_status": "状态：{status}"
 }

@@ -228,5 +228,9 @@ jobs:
           git diff --staged --quiet
           if ($LASTEXITCODE -ne 0) {
             git commit -m "docs: SHA256 релиза $env:ARCHIVE обновлён автоматически"
-            git push
+            # Явный remote и ветка: checkout -B создал ветку из FETCH_HEAD
+            # БЕЗ upstream, и голый `git push` падал с «The current branch
+            # main has no upstream branch» (FIX-35). Коммит при этом уже
+            # был создан — хеши молча не попадали в README, а шаг падал.
+            git push origin "HEAD:${{ github.event.repository.default_branch }}"
           }

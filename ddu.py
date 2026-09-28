@@ -72,7 +72,16 @@ PRELOAD_SUBKEY = r"Keyboard Layout\Preload"
 BRANCHES: tuple[tuple[str, str], ...] = (
     (PRELOAD_SUBKEY, "preload"),
     (r"Keyboard Layout\Substitutes", "substitutes"),
-    (r"Control Panel\International", "intl"),
+    # Именно ``...\User Profile``, а не ``...\International``:
+    # ``_clean_intl_profile`` ищет подключи-языки (``en-US``) СРАЗУ под
+    # переданным путём. С уровнем выше он искал ``International\en-US``,
+    # которого нет, и не удалял ничего — тихо. Тот же путь, что и в
+    # scanner.get_affected_branches().
+    (r"Control Panel\International\User Profile", "intl"),
+    # Отдельная ветка, которой нет в списке пользователя: в шаблоне она
+    # тоже объявляет ``0409:00000409``, и именно из шаблона Windows
+    # пересобирает HKU\.DEFAULT.
+    (r"Control Panel\International\User Profile System Backup", "intl"),
     (r"Software\Microsoft\CTF", "ctf"),
 )
 

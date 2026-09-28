@@ -421,7 +421,7 @@ def test_wipe_covers_every_branch_not_only_preload(monkeypatch, allowed):
     assert expected <= touched, f"не вычищены ветки: {expected - touched}"
     # Антирегрессия к исходному дефекту: шаблон ТОЛЬКО с Preload.
     assert len(expected) > 1, "BRANCHES снова схлопнулся до одной ветки"
-    intl = r"Control Panel\International"
+    intl = r"Control Panel\International\User Profile"
     assert intl in touched, r"шаблон не чистится по Control Panel\International"
     ctf = r"Software\Microsoft\CTF"
     assert ctf in touched, r"шаблон не чистится по Software\Microsoft\CTF"
@@ -445,6 +445,34 @@ def test_export_covers_whole_template(monkeypatch, allowed, tmp_path):
     monkeypatch.setattr(ddu, "_reg", fake_reg_cmd)
     assert ddu.export_preload(dest) is True
     assert any(s == f"HKU\\{ddu.MOUNT_NAME}" for s in seen), seen
+
+
+def test_intl_branch_is_nested_under_user_profile(monkeypatch, allowed):
+    """Ветка international должна быть на уровне профилей, а не выше.
+
+    Регрессия, найденная на живой машине: с путём
+    ``Control Panel\\International`` функция ищет подключи-языки СРАЗУ под
+    ним, то есть ``International\\en-US``. Такого подключа нет — профили
+    лежат уровнем ниже, в ``International\\User Profile\\en-US``. Результат:
+    тихо ничего не удалено, и раскладка возвращалась после перезагрузки.
+
+    Тест сверяет путь с ветками сканера: если они разойдутся, чистка шаблона
+    снова станет выборочной и молчаливой.
+    """
+    import scanner
+
+    _, intl_sub, _, _ = next(
+        (r, s, m, a)
+        for r, s, m, a in scanner.get_affected_branches()
+        if s.endswith("User Profile")
+    )
+    ddu_intl = {sub for sub, mode in ddu.BRANCHES if mode == "intl"}
+    assert intl_sub in ddu_intl, (
+        f"у сканера {intl_sub!r}, в шаблоне чистим {ddu_intl!r} - "
+        "профили языков не будут найдены"
+    )
+    # Отдельно: ветка, которой нет у пользователя, но она есть в шаблоне.
+    assert r"Control Panel\International\User Profile System Backup" in ddu_intl
 
 
 def test_result_dialog_mentions_default_profile(monkeypatch):

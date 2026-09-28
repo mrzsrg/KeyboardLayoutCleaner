@@ -606,9 +606,38 @@ class TestSourceCoverageInvariants:
         assert catalog[0][0] not in affected
 
     def test_report_field_covers_all_affected_branches(self):
-        """Каждая ветка матрицы имеет поле отчёта — и никаких лишних."""
+        """Каждая ветка матрицы имеет поле отчёта — и никаких лишних.
+
+        FIX-37h: к сканируемым веткам добавлены чисто-чистильные ``.DEFAULT``
+        (см. :data:`scanner.CLEAN_ONLY_BRANCHES`) — у них тоже есть поле
+        отчёта, иначе их правки не попадут в результат операции.
+        """
         pairs = {(root, subkey) for root, subkey, _m, _a in self.REAL_BRANCHES}
-        assert set(cleaner._REPORT_FIELD) == pairs
+        clean_only = {
+            (root, subkey) for root, subkey, _m, _a in scanner.CLEAN_ONLY_BRANCHES
+        }
+        assert set(cleaner._REPORT_FIELD) == pairs | clean_only
+
+    def test_clean_only_branches_are_not_scanned(self):
+        """FIX-37h: ветки .DEFAULT чистятся, но не выдаются за раскладки юзера."""
+        scan_pairs = {
+            (root, subkey) for root, subkey, _m, _a in self.REAL_BRANCHES
+        }
+        clean_only = {
+            (root, subkey) for root, subkey, _m, _a in scanner.CLEAN_ONLY_BRANCHES
+        }
+        assert clean_only == {
+            ("HKU", ".DEFAULT\\Control Panel\\International\\User Profile"),
+            (
+                "HKU",
+                ".DEFAULT\\Control Panel\\International\\User Profile System Backup",
+            ),
+            ("HKU", ".DEFAULT\\Software\\Microsoft\\CTF"),
+        }
+        assert not (scan_pairs & clean_only)
+        # и сканер их не видит
+        scanned = {sk for sk, _scan_type in scanner.HKCU_BRANCHES}
+        assert not (scanned & {sk for _r, sk in clean_only})
 
     def test_recursive_subkeys_subset_of_hkcu_branches(self):
         """Рекурсивная очистка — только внутри HKCU-веток матрицы."""

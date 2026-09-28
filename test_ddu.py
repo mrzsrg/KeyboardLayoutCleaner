@@ -594,6 +594,10 @@ def _patch_delete_env(monkeypatch, tmp_path):
     )
     monkeypatch.setattr(cleaner, "_detect_plan_drift", lambda *a, **k: [])
     monkeypatch.setattr(cleaner, "_affected_branches", lambda: [])
+    # FIX-37h: delete_layout берёт ветки через _branches_for_mutation, а она
+    # добавляет к списку CLEAN_ONLY_BRANCHES. Без заглушки тест ушёл бы
+    # писать в ЖИВОЙ HKU\.DEFAULT мимо песочницы.
+    monkeypatch.setattr(cleaner, "_branches_for_mutation", lambda: [])
     monkeypatch.setattr(cleaner, "_current_preload_klids", lambda admin: {"00000419"})
     monkeypatch.setattr(cleaner, "check_switcher_consistency", lambda: {})
     monkeypatch.setattr(ddu, "is_blocked_reason", lambda: "")
@@ -672,6 +676,41 @@ def test_delete_continues_when_template_absent(monkeypatch, tmp_path):
 
     assert result["success"] is True
     assert result["ddu_preload_deleted"] == []
+
+
+def test_language_sync_runs_before_registry_wipe(monkeypatch, tmp_path, allowed):
+    """FIX-37h: список языков синхронизируется, ПОКА привязки ещё в реестре.
+
+    Живой прогон 28.09.2026: шаг стоял после чистки веток, поэтому
+    ``Get-WinUserLanguageList`` не увидел подсказки ``0409:00000409``,
+    ответил ``NOCHANGE`` — и язык en-US остался в ``Languages``. Windows
+    считал его установленным и возвращал US после каждой перезагрузки.
+
+    Порядок фиксируется здесь намеренно: он не виден ни в отчёте, ни в
+    Journal, а именно он стоил инцидента.
+    """
+    _patch_delete_env(monkeypatch, tmp_path)
+    # Шаблон профиля по умолчанию — живой файл: подменяем, чтобы тест не
+    # трогал C:\Users\Default\NTUSER.DAT (иначе он отменяет операцию).
+    monkeypatch.setattr(ddu, "export_preload", lambda dest: True)
+    monkeypatch.setattr(ddu, "wipe_preload", lambda klid: [])
+    order: list[str] = []
+    monkeypatch.setattr(
+        cleaner,
+        "_sync_language_list_via_powershell",
+        lambda klid: (order.append("ps") or (True, "SUCCESS")),
+    )
+    monkeypatch.setattr(
+        cleaner, "_wipe_branches", lambda *a, **k: order.append("wipe") or 0
+    )
+    monkeypatch.setattr(cleaner, "_wipe_ddu", lambda *a, **k: 0)
+
+    cleaner.delete_layout("00000409")
+
+    # Шаг 5 повторяет чистку (шаг 4 — верификация), поэтому важно, чтобы
+    # синхронизация была ПЕРВОЙ и ровно один раз.
+    assert order.count("ps") == 1
+    assert order[0] == "ps", order
 
 
 def test_restore_brings_template_back(monkeypatch, tmp_path, allowed):

@@ -143,6 +143,9 @@ from mutate import (
     _clean_ctf_profiles as _clean_ctf_profiles,
 )
 from mutate import (
+    _clean_intl_language_if_unused as _clean_intl_language_if_unused,
+)
+from mutate import (
     _clean_intl_profile as _clean_intl_profile,
 )
 from mutate import (
@@ -201,6 +204,9 @@ from mutate import (
 )
 from mutate import (
     _walk_ctf_profiles as _walk_ctf_profiles,
+)
+from scanner import (
+    CLEAN_ONLY_BRANCHES as _CLEAN_ONLY_BRANCHES,
 )
 from scanner import _get_preload_keys
 from scanner import (
@@ -351,6 +357,16 @@ _REPORT_FIELD: dict[tuple[str, str], str] = {
         "Software\\Microsoft\\Windows\\CurrentVersion\\SettingSync\\Namespace\\Language",
     ): "hkcu_settingsync_deleted",
     ("HKU", ".DEFAULT\\Keyboard Layout\\Preload"): "hku_default_deleted",
+    # FIX-37h: живые ветки .DEFAULT, которых не было в матрице сканирования
+    (
+        "HKU",
+        ".DEFAULT\\Control Panel\\International\\User Profile",
+    ): "hku_default_intl_deleted",
+    (
+        "HKU",
+        ".DEFAULT\\Control Panel\\International\\User Profile System Backup",
+    ): "hku_default_intl_deleted",
+    ("HKU", ".DEFAULT\\Software\\Microsoft\\CTF"): "hku_default_ctf_deleted",
 }
 
 
@@ -369,6 +385,66 @@ def _report_field_for(root: str, subkey: str) -> str:
         if sk == rel:
             return field
     return "other_deleted"
+
+
+# ---------------------------------------------------------------------------
+# FIX-37h: ветки .DEFAULT, которые чистятся, но не сканируются
+# ---------------------------------------------------------------------------
+# Проверки по СУФФИКСУ, а не по точному равенству: в песочнице те же ветки
+# лежат под префиксом _SANDBOX_ROOT, а реальные ветки .DEFAULT — с префиксом
+# ".DEFAULT\". Единая проверка избавляет от трёх почти одинаковых условий,
+# расходящихся при добавлении ветки.
+
+def _is_intl_branch(subkey: str) -> bool:
+    """Ветка профиля языка: ``User Profile`` и её копия ``System Backup``."""
+    return subkey.endswith(_INTL_SUBKEY) or subkey.endswith(
+        _INTL_SUBKEY + " System Backup"
+    )
+
+
+def _is_ctf_branch(subkey: str) -> bool:
+    """Ветка CTF."""
+    return subkey.endswith(_CTF_SUBKEY)
+
+
+def _is_recursive_branch(subkey: str) -> bool:
+    """Чистится ли ветка рекурсивным обходом."""
+    return subkey in _recursive_subkeys() or _is_intl_branch(subkey) or (
+        _is_ctf_branch(subkey)
+    )
+
+
+def _preload_subkey_for(subkey: str) -> str:
+    """Ветка ``Preload`` того же корня, что и ``subkey``.
+
+    Нужна, чтобы решить, остались ли у языка другие раскладки: список
+    раскладок пользователя — это ``Preload``, а не профиль языка. Префикс
+    берётся отбрасыванием известного хвоста ветки, поэтому ``.DEFAULT\\``
+    (HKU) и ``_SANDBOX_ROOT\\`` (песочница) сохраняются сами.
+    """
+    for tail in (_INTL_SUBKEY, _INTL_SUBKEY + " System Backup", _CTF_SUBKEY):
+        if subkey.endswith(tail):
+            return subkey[: -len(tail)] + "Keyboard Layout\\Preload"
+    return "Keyboard Layout\\Preload"
+
+
+def _branches_for_mutation() -> list[tuple[str, str, str, bool]]:
+    """Ветки операции удаления: сканируемые + чисто-чистильные (FIX-37h).
+
+    В песочнице ``CLEAN_ONLY_BRANCHES`` отбрасываются: песочница обязана
+    перенаправить всё в ``HKCU\\...\\Sandbox``, а эти ветки указывают на живой
+    ``HKU\\.DEFAULT`` — единственное место, где песочница не имеет права
+    писать.
+    """
+    branches = list(_affected_branches())
+    if is_sandbox_enabled():
+        return branches
+    known = {(root, subkey) for root, subkey, _m, _a in branches}
+    for root, subkey, mode, admin_required in _CLEAN_ONLY_BRANCHES:
+        if (root, subkey) not in known:
+            branches.append((root, subkey, mode, admin_required))
+    return branches
+
 
 
 # ---------------------------------------------------------------------------
@@ -735,9 +811,9 @@ def _wipe_branches(
         if admin_required and not result["admin_privileges"]:
             continue
         field = _report_field_for(root, subkey)
-        if subkey in _recursive_subkeys():
+        if _is_recursive_branch(subkey):
             deleted: list[str] = []
-            if subkey == _ctf_subkey():
+            if _is_ctf_branch(subkey):
                 profiles = _clean_ctf_profiles(_ROOT_CONST[root], subkey, layout_id)
                 result["ctf_profiles_deleted"] = (
                     result.get("ctf_profiles_deleted", []) + profiles
@@ -751,9 +827,18 @@ def _wipe_branches(
             deleted += _clean_branch_recursive(
                 _ROOT_CONST[root], subkey, layout_id, mode
             )
-            if subkey == _intl_subkey():
+            if _is_intl_branch(subkey):
                 # User Profile: точечная очистка записей KLID
                 deleted += _clean_intl_profile(_ROOT_CONST[root], subkey, layout_id)
+                # FIX-37h: язык, у которого не осталось других раскладок,
+                # убирается из Languages вместе с профилем. Иначе Windows
+                # считает язык установленным и возвращает раскладку.
+                deleted += _clean_intl_language_if_unused(
+                    _ROOT_CONST[root],
+                    subkey,
+                    _preload_subkey_for(subkey),
+                    layout_id,
+                )
         elif mode == "substitutes":
             deleted = _clean_substitutes_keys(_ROOT_CONST[root], subkey, layout_id)
         else:
@@ -781,6 +866,8 @@ def _count_deleted_from_report(result: dict[str, Any]) -> int:
         "hkcu_preload_deleted",
         "hkcu_substitutes_deleted",
         "hkcu_intl_deleted",
+        "hku_default_intl_deleted",
+        "hku_default_ctf_deleted",
         "hkcu_ctf_deleted",
         "hku_default_deleted",
         "ddu_preload_deleted",
@@ -945,13 +1032,13 @@ def _find_remaining_values(
     for root, subkey, mode, admin_required in branches_now:
         if admin_required and not admin_privileges:
             continue
-        if subkey in _recursive_subkeys():
+        if _is_recursive_branch(subkey):
             remaining.extend(
                 _scan_remaining_recursive(
                     _ROOT_CONST.get(root, 0), subkey, layout_id_norm, variants, mode
                 )
             )
-            if subkey == _ctf_subkey():
+            if _is_ctf_branch(subkey):
                 # Профильные ключи CTF удаляются целиком (_clean_ctf_profiles) и
                 # попадают в снимок как profile_keys — значит и в остатке они
                 # должны проверяться тем же вызовом с delete=False, иначе
@@ -961,7 +1048,7 @@ def _find_remaining_values(
                         _ROOT_CONST.get(root, 0), subkey, layout_id_norm, delete=False
                     )
                 )
-            if subkey == _intl_subkey():
+            if _is_intl_branch(subkey):
                 remaining.extend(
                     _scan_remaining_intl(
                         _ROOT_CONST.get(root, 0), subkey, layout_id_norm, variants
@@ -1242,6 +1329,8 @@ def delete_layout(layout_id: str, block_cloud_sync: bool = False) -> dict[str, A
         # при следующей загрузке.
         "ddu_save_error": "",
         "hkcu_intl_deleted": [],
+        "hku_default_intl_deleted": [],  # FIX-37h: .DEFAULT\...\User Profile
+        "hku_default_ctf_deleted": [],  # FIX-37h: .DEFAULT\Software\Microsoft\CTF
         "hkcu_settingsync_deleted": [],
         "ctf_profiles_deleted": [],
         "power_sync": False,
@@ -1267,9 +1356,12 @@ def delete_layout(layout_id: str, block_cloud_sync: bool = False) -> dict[str, A
         return result
 
     # ------------------------------------------------------------------
-    # Список веток — единый источник истины (scanner, sandbox-aware)
+    # Список веток — единый источник истины (scanner, sandbox-aware).
+    # FIX-37h: для ОПЕРАЦИИ список шире, чем для сканирования: в него входят
+    # ветки .DEFAULT, которые не сканируются, но обязаны быть вычищены, —
+    # иначе выключение Windows вернёт в шаблон то, что осталось в памяти.
     # ------------------------------------------------------------------
-    branches_now = _affected_branches()
+    branches_now = _branches_for_mutation()
 
     # FIX-2: + backup-only источник SettingSync\Groups\Language — restore
     # (reg import) вернёт исходное состояние блокировки облака.
@@ -1364,16 +1456,21 @@ def delete_layout(layout_id: str, block_cloud_sync: bool = False) -> dict[str, A
             if manifest_path:
                 result["manifest_path"] = manifest_path
 
+            # Шаг 3: Синхронизация списка языков через PowerShell —
+            # ДО чистки веток (FIX-37h). Get-WinUserLanguageList читает
+            # привязки из реестра, поэтому после чистки он их уже не видит,
+            # отвечает NOCHANGE и оставляет язык в списке: US возвращался
+            # после каждой перезагрузки. Шаг ничего не делает без прав и
+            # без изменений — это не отказ операции.
+            ok, detail = _sync_language_list_via_powershell(layout_id)
+            result["power_sync"] = ok
+            result["power_sync_detail"] = detail
+
             # Шаг 3a: Очистка веток реестра (идемпотентная — можно повторять)
             total_deleted = _wipe_branches(branches_now, result, layout_id)
             # FIX-37: + шаблон профиля по умолчанию — иначе возврат при
             # следующей перезагрузке.
             total_deleted += _wipe_ddu(result, layout_id)
-
-            # Шаг 4: Синхронизация списка языков через PowerShell
-            ok, detail = _sync_language_list_via_powershell(layout_id)
-            result["power_sync"] = ok
-            result["power_sync_detail"] = detail
 
             # Шаг 4a: Блокировка облачной синхронизации языков — только
             # opt-in (FIX-2, Находка A): раньше disable выполнялся безусловно
@@ -1504,9 +1601,9 @@ def plan_layout_removal(layout_id: str) -> dict[str, Any]:
         if admin_required and not admin:
             branches[f"{root}\\{subkey}"] = entry
             continue
-        if subkey in _recursive_subkeys():
+        if _is_recursive_branch(subkey):
             entry["values"] = []
-            if subkey == _ctf_subkey():
+            if _is_ctf_branch(subkey):
                 # Dry-run показывает и ключи TSF-профилей целиком
                 entry["profile_keys"] = _clean_ctf_profiles(
                     _ROOT_CONST[root], subkey, layout_id, delete=False
@@ -1514,7 +1611,7 @@ def plan_layout_removal(layout_id: str) -> dict[str, Any]:
             entry["values"] += _clean_branch_recursive(
                 _ROOT_CONST[root], subkey, layout_id, mode, delete=False
             )
-            if subkey == _intl_subkey():
+            if _is_intl_branch(subkey):
                 # Dry-run тоже показывает теги/подключи User Profile
                 entry["values"] += _clean_intl_profile(
                     _ROOT_CONST[root], subkey, layout_id, delete=False

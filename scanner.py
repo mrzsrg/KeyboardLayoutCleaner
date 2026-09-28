@@ -165,6 +165,36 @@ AFFECTED_BRANCHES: list[tuple[str, str, str, bool]] = [
     ("HKU", ".DEFAULT\\Keyboard Layout\\Preload", "preload", True),
 ]
 
+# FIX-37h: ветки, которые ЧИСТЯТСЯ, но НЕ сканируются.
+#
+# Живой прогон 28.09.2026: `HKU\.DEFAULT\Keyboard Layout\Preload` в списке
+# стоял, а `...\Control Panel\International\User Profile` и
+# `Software\Microsoft\CTF` — нет. Итог: живой hive `.DEFAULT` оставался с
+# en-US, и выключение Windows записывало его обратно в
+# `C:\Users\Default\NTUSER.DAT` — уже ПОСЛЕ нашей правки файла. US
+# возвращался при следующей загрузке, хотя шаблон в момент операции был
+# чист (196608 байт, ноль найденных значений).
+#
+# Почему они не сканируются: язык профиля по умолчанию — не язык
+# пользователя. Показывать его в списке раскладок значило бы выдумать
+# раскладку, которой у человека нет. Но чистить их обязаны: именно оттуда
+# Windows берёт раскладку для новых сеансов и возвращает удалённую.
+CLEAN_ONLY_BRANCHES: list[tuple[str, str, str, bool]] = [
+    (
+        "HKU",
+        ".DEFAULT\\Control Panel\\International\\User Profile",
+        "preload",
+        True,
+    ),
+    (
+        "HKU",
+        ".DEFAULT\\Control Panel\\International\\User Profile System Backup",
+        "preload",
+        True,
+    ),
+    ("HKU", ".DEFAULT\\Software\\Microsoft\\CTF", "preload", True),
+]
+
 HKCU_BRANCHES: list[tuple[str, str]] = [
     (subkey, scan_type)
     for root, subkey, scan_type, _admin in AFFECTED_BRANCHES

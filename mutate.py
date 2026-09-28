@@ -1009,6 +1009,119 @@ def _clean_intl_languages(
         return []
 
 
+
+def _clean_intl_language_if_unused(
+    root_key: int,
+    intl_subkey: str,
+    preload_subkey: str,
+    layout_klid: str,
+    delete: bool = True,
+) -> list[str]:
+    """FIX-37h: убрать ЯЗЫК из профиля, если раскладок не осталось.
+
+    Живой прогон 28.09.2026 (пользователь с ``ru`` + ``en-US``): раскладка
+    уходила из ``Preload`` и CTF, но значение ``Languages`` оставалось
+    ``ru|en-US``, а ключ ``User Profile\\en-US`` — на месте. Windows считает
+    язык установленным и возвращает раскладку в переключатель при каждой
+    загрузке; в журнале это видно как ``switcher_stale = 00000409``.
+
+    Почему не хватило PowerShell-шага (``Set-WinUserLanguageList``): к его
+    моменту реестр был уже вычищен, ``Get-WinUserLanguageList`` не видел
+    подсказки ``0409:00000409`` и отвечал ``NOCHANGE`` — язык не убирался.
+    Поэтому шаг синхронизации перенесён ДО чистки веток, но опираться
+    только на него нельзя: он молчит и при других сбоях, а молчание
+    выглядит как успех.
+
+    Условие удаления языка — в ``Preload`` не осталось НИ ОДНОЙ другой
+    раскладки того же языка. Сравнение по BCP-47-тегам, а не по префиксу
+    KLID: ``00000419`` и ``00000409`` не «одна LANGID» (у KLID старшие
+    четыре символа — нули), и по подписи каталога ``00000411`` — это
+    Japanese, а не вторая американская раскладка (проверено на живой
+    машине: ``Layout Text`` в ``Keyboard Layouts\\00000411``).
+
+    Неопознанные раскладки (тех, которых нет в ``LAYOUT_MAP``) удалению
+    языка НЕ мешают: у них может быть любая страна, а молчаливый отказ
+    означал бы, что языковой профиль остаётся и раскладка вернётся — ровно
+    тот инцидент, который чинится. Такие KLID попадают в журнал, чтобы
+    решение можно было проверить, а их раскладки пользователя при этом
+    остаются на месте.
+
+    Если ``Preload`` недоступен, язык не трогаем: отсутствие доказательства
+    — не повод удалять.
+
+    Returns
+    -------
+    list[str]
+        Описание изменений (при delete=False — которые БЫЛИ бы внесены).
+    """
+    tags = _klid_to_tags(layout_klid)
+    if not tags:
+        return []
+    # FIX-29: мутация требует права; при delete=False только чтение.
+    _require_mutation(delete, "_clean_intl_language_if_unused")
+
+    target = layout_klid.strip().lower()
+    tag_norms = {t.strip().lower() for t in tags}
+    siblings: list[str] = []
+    unknown: list[str] = []
+    try:
+        with winreg.OpenKey(root_key, preload_subkey, 0, winreg.KEY_READ) as pkey:
+            idx = 0
+            while True:
+                try:
+                    _name, value, _vtype = winreg.EnumValue(pkey, idx)
+                except OSError:
+                    break
+                idx += 1
+                token = str(value).strip().lower()
+                if not re.fullmatch(r"[0-9a-f]{8}", token) or token == target:
+                    continue
+                token_tags = {t.lower() for t in _klid_to_tags(token)}
+                if not token_tags:
+                    unknown.append(token)
+                elif token_tags & tag_norms:
+                    siblings.append(token)
+    except OSError as exc:
+        logger.debug(
+            "Preload %s недоступен (%s) — язык %s оставлен",
+            preload_subkey,
+            exc,
+            sorted(tag_norms),
+        )
+        return []
+
+    if unknown:
+        logger.info(
+            "В Preload есть раскладки вне таблицы (%s) — язык по ним не судим",
+            ", ".join(sorted(unknown)),
+        )
+    if siblings:
+        logger.info(
+            "Язык %s остаётся: в Preload есть его другие раскладки: %s",
+            sorted(tag_norms),
+            ", ".join(sorted(siblings)),
+        )
+        return []
+
+    deleted = _clean_intl_languages(root_key, intl_subkey, layout_klid, delete)
+
+    # Порядок FIX-37g повторён: сначала Languages, потом профили — иначе
+    # опустевший профиль языка сохранился бы как «активный».
+    for tag in sorted(tags):
+        profile = f"{intl_subkey}\\{tag}"
+        try:
+            with winreg.OpenKey(root_key, profile, 0, winreg.KEY_READ):
+                pass
+        except OSError:
+            continue
+        if delete:
+            if _delete_subtree(root_key, profile):
+                deleted.append(f"{tag} <профиль языка удалён>")
+        else:
+            deleted.append(f"{tag} <профиль языка будет удалён>")
+    return deleted
+
+
 # Значения-ссылки на раскладку внутри ключей TSF-профилей CTF
 _CTF_PROFILE_VALUE_NAMES = {"keyboardlayout", "klid"}
 

@@ -477,6 +477,211 @@ class TestIntlLanguagesValue(SandboxTestCase):
         )
 
 
+class TestIntlLanguageIfUnused(SandboxTestCase):
+    """FIX-37h: язык убирается из профиля, только если остался без раскладок.
+
+    Живой прогон 28.09.2026: US ушла из ``Preload`` и CTF, но ``Languages``
+    остался ``ru|en-US``, а ``User Profile\\en-US`` — на месте. Windows
+    считает язык установленным и возвращает раскладку в переключатель при
+    каждой загрузке (в журнале — ``switcher_stale``). PowerShell-шаг язык не
+    убрал: к его моменту реестр был уже вычищен, ``Get-WinUserLanguageList``
+    не увидел подсказки и ответил NOCHANGE.
+
+    Главная опасность здесь — снести язык, у которого есть ещё раскладки:
+    у ``en-US`` это ``en-US Dvorak`` (``00000411``).
+    """
+
+    @pytest.fixture(autouse=True)
+    def _allow_destructive(self):
+        capabilities.grant(capabilities.Capability.REGISTRY_MUTATE)
+
+    def _make_profile(self, name: str, langs: list[str], preload: list[str]):
+        """Ветка ``User Profile`` + ``Preload`` того же тестового корня."""
+        intl = TEST_ROOT + "\\" + name + "\\User Profile"
+        preload_key = TEST_ROOT + "\\" + name + "\\Keyboard Layout\\Preload"
+        with winreg.CreateKeyEx(
+            winreg.HKEY_CURRENT_USER, intl, 0, winreg.KEY_SET_VALUE
+        ) as key:
+            winreg.SetValueEx(key, "Languages", 0, winreg.REG_MULTI_SZ, langs)
+        with winreg.CreateKeyEx(
+            winreg.HKEY_CURRENT_USER, intl + "\\en-US", 0, winreg.KEY_SET_VALUE
+        ) as key:
+            # Метаданные живого профиля: ключ не пустой, поэтому
+            # _clean_intl_profile его не удалит — язык убирает эта функция.
+            winreg.SetValueEx(key, "CachedLanguageName", 0, winreg.REG_SZ, "x")
+        with winreg.CreateKeyEx(
+            winreg.HKEY_CURRENT_USER, preload_key, 0, winreg.KEY_SET_VALUE
+        ) as key:
+            for i, klid in enumerate(preload, start=1):
+                winreg.SetValueEx(key, str(i), 0, winreg.REG_SZ, klid)
+        return intl, preload_key
+
+    @staticmethod
+    def _languages(intl: str):
+        try:
+            with winreg.OpenKey(
+                winreg.HKEY_CURRENT_USER, intl, 0, winreg.KEY_READ
+            ) as key:
+                return list(winreg.QueryValueEx(key, "Languages")[0])
+        except FileNotFoundError:
+            return None
+
+    @staticmethod
+    def _key_exists(path: str) -> bool:
+        try:
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, path):
+                return True
+        except FileNotFoundError:
+            return False
+
+    def test_language_and_profile_removed_when_no_layouts_left(self) -> None:
+        """Смысл фикса: en-US исчезает из Languages, и его профиль удалён."""
+        intl, preload = self._make_profile("Unused", ["ru", "en-US"], ["00000419"])
+
+        deleted = mutate._clean_intl_language_if_unused(
+            winreg.HKEY_CURRENT_USER, intl, preload, "00000409"
+        )
+
+        assert deleted, "изменение должно быть описано в отчёте"
+        assert self._languages(intl) == ["ru"]
+        assert not self._key_exists(intl + "\\en-US")
+
+    def test_language_kept_when_another_layout_of_same_language_remains(
+        self,
+    ) -> None:
+        """Вторая раскладка того же языка — профиль нужен, язык не трогаем.
+
+        Сравнение идёт по BCP-47-тегам, а в таблице ``LAYOUT_MAP`` у ``en-US``
+        сейчас ровно один KLID, поэтому «вторую американскую раскладку»
+        приходится сымитировать: проверяется логика, а не таблица.
+        """
+        real = mutate._klid_to_tags
+
+        def fake(klid: str):
+            return {"en-US"} if klid.lower() == "00000413" else real(klid)
+
+        intl, preload = self._make_profile(
+            "Sibling", ["ru", "en-US"], ["00000419", "00000413"]
+        )
+        with mock.patch.object(mutate, "_klid_to_tags", fake):
+            deleted = mutate._clean_intl_language_if_unused(
+                winreg.HKEY_CURRENT_USER, intl, preload, "00000409"
+            )
+
+        assert deleted == []
+        assert self._languages(intl) == ["ru", "en-US"]
+        assert self._key_exists(intl + "\\en-US")
+
+    def test_unknown_layout_does_not_block(self) -> None:
+        """Раскладки вне таблицы не судья: молчаливый отказ = раскладка вернётся."""
+        intl, preload = self._make_profile(
+            "Unknown2", ["ru", "en-US"], ["00000419", "0000beef"]
+        )
+
+        mutate._clean_intl_language_if_unused(
+            winreg.HKEY_CURRENT_USER, intl, preload, "00000409"
+        )
+
+        assert self._languages(intl) == ["ru"]
+
+    def test_other_language_layout_does_not_block(self) -> None:
+        """ru в Preload — не повод держать en-US (00000411 — это Japanese)."""
+        intl, preload = self._make_profile(
+            "Other", ["ru", "en-US"], ["00000419", "00000411"]
+        )
+
+        mutate._clean_intl_language_if_unused(
+            winreg.HKEY_CURRENT_USER, intl, preload, "00000409"
+        )
+
+        assert self._languages(intl) == ["ru"]
+
+    def test_target_still_in_preload_does_not_block(self) -> None:
+        """Сама удаляемая раскладка в Preload — не «другая»; чистим."""
+        intl, preload = self._make_profile(
+            "Target", ["ru", "en-US"], ["00000419", "00000409"]
+        )
+
+        mutate._clean_intl_language_if_unused(
+            winreg.HKEY_CURRENT_USER, intl, preload, "00000409"
+        )
+
+        assert self._languages(intl) == ["ru"]
+
+    def test_missing_preload_keeps_language(self) -> None:
+        """Нет Preload — нет доказательства, что язык остался без раскладок."""
+        intl, _preload = self._make_profile("NoPreload", ["ru", "en-US"], [])
+
+        deleted = mutate._clean_intl_language_if_unused(
+            winreg.HKEY_CURRENT_USER,
+            intl,
+            TEST_ROOT + "\\NoPreload\\Keyboard Layout\\Absent",
+            "00000409",
+        )
+
+        assert deleted == []
+        assert self._languages(intl) == ["ru", "en-US"]
+
+    def test_dry_run_does_not_modify(self) -> None:
+        intl, preload = self._make_profile("Dry", ["ru", "en-US"], ["00000419"])
+
+        deleted = mutate._clean_intl_language_if_unused(
+            winreg.HKEY_CURRENT_USER, intl, preload, "00000409", delete=False
+        )
+
+        assert deleted, "dry-run обязан сообщать, что изменил бы"
+        assert self._languages(intl) == ["ru", "en-US"]
+        assert self._key_exists(intl + "\\en-US")
+
+    def test_unknown_klid_is_noop(self) -> None:
+        intl, preload = self._make_profile("Unknown", ["ru", "en-US"], ["00000419"])
+
+        assert (
+            mutate._clean_intl_language_if_unused(
+                winreg.HKEY_CURRENT_USER, intl, preload, "d001dead"
+            )
+            == []
+        )
+        assert self._languages(intl) == ["ru", "en-US"]
+
+
+class TestPreloadSubkeyResolution:
+    """FIX-37h: путь Preload выводится из пути ветки, а не задаётся жёстко."""
+
+    def test_hkcu_branch_maps_to_hkcu_preload(self) -> None:
+        assert (
+            cleaner._preload_subkey_for("Control Panel\\International\\User Profile")
+            == "Keyboard Layout\\Preload"
+        )
+
+    def test_default_branch_maps_to_default_preload(self) -> None:
+        """Иначе ветка HKU искала бы Preload в HKCU и «видела» бы чужой список."""
+        assert cleaner._preload_subkey_for(
+            ".DEFAULT\\Control Panel\\International\\User Profile System Backup"
+        ) == (".DEFAULT\\Keyboard Layout\\Preload")
+
+    def test_sandbox_branch_stays_in_sandbox(self) -> None:
+        subkey = cleaner._SANDBOX_ROOT + "\\Control Panel\\International\\User Profile"
+        assert cleaner._preload_subkey_for(subkey).startswith(
+            cleaner._SANDBOX_ROOT
+        )
+
+    def test_mutation_branches_include_clean_only(self) -> None:
+        keys = {subkey for _r, subkey, _m, _a in cleaner._branches_for_mutation()}
+        assert ".DEFAULT\\Software\\Microsoft\\CTF" in keys
+
+    def test_sandbox_never_gets_clean_only(self) -> None:
+        """Песочница не имеет права писать в живой HKU\\.DEFAULT."""
+        scanner.activate_sandbox()
+        try:
+            keys = {
+                subkey for _r, subkey, _m, _a in cleaner._branches_for_mutation()
+            }
+            assert not any(k.startswith(".DEFAULT") for k in keys)
+        finally:
+            scanner.deactivate_sandbox()
+
+
 @pytest.mark.live
 class TestIntlProfileInputMethodBinding(SandboxTestCase):
     """Шаблон профиля: привязка метода ввода живёт в ИМЕНИ значения.

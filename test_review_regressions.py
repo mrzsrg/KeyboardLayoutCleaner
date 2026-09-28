@@ -960,7 +960,14 @@ class TestScanCleanParity:
         assert result["plan_drift"] == [], result["plan_drift"]
         assert result["hkcu_preload_deleted"] == ["1"]
         assert result["hkcu_substitutes_deleted"] == ["00000419"]
-        assert result["hkcu_intl_deleted"] == ["ru-RU\\KeyboardLayoutPreload"]
+        # FIX-37h: помимо значений, которые нашёл сканер, убирается САМ ЯЗЫК —
+        # ru остался без раскладок, поэтому он вычеркнут из Languages, а его
+        # профиль удалён. en-US в списке остаётся: он не удаляемая раскладка.
+        assert result["hkcu_intl_deleted"] == [
+            "ru-RU\\KeyboardLayoutPreload",
+            "Languages en-US|ru-RU -> en-US",
+            "ru-RU <профиль языка удалён>",
+        ]
         assert result["hkcu_settingsync_deleted"] == ["ru-RU"]
         assert result["hku_default_deleted"] == ["1"]
         assert result["hkcu_ctf_deleted"] == ["SortOrder\\Language\\00000000"]

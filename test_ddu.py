@@ -374,6 +374,79 @@ class _NoopSuspender:
 # ---------------------------------------------------------------------------
 
 
+def test_wipe_covers_every_branch_not_only_preload(monkeypatch, allowed):
+    """Шаблон чистится целиком, а не только по Preload (главный дефект).
+
+    На живой машине выяснилось: чистки ``Keyboard Layout\\Preload``
+    хватало ровно до перезагрузки. Windows пересобирает ``HKU\\.DEFAULT``
+    из остальных веток шаблона, где раскладка оставалась — а именно из
+    ``Control Panel\\International`` и ``Software\\Microsoft\\CTF``.
+
+    Тест фиксирует СПИСОК веток, а не факт вызова функции: вызов и раньше
+    был, а вот охват был неполным, и это ничем не ловилось.
+    """
+    calls: list[tuple[str, str]] = []
+
+    def record(root, subkey, klid, match_mode="preload", delete=True):
+        calls.append((subkey, "recursive"))
+        return []
+
+    def record_simple(root, subkey, klid, delete=True):
+        calls.append((subkey, "simple"))
+        return ["x"]
+
+    monkeypatch.setattr(ddu.mutate, "_clean_preload_keys", record_simple)
+    monkeypatch.setattr(ddu.mutate, "_clean_substitutes_keys", record_simple)
+    monkeypatch.setattr(ddu.mutate, "_clean_intl_profile", record_simple)
+    monkeypatch.setattr(ddu.mutate, "_clean_ctf_profiles", lambda *a, **k: [])
+    monkeypatch.setattr(ddu.mutate, "_clean_branch_recursive", record)
+    # Фейковый hive не подгрузить: без заглушки reg load вернёт ошибку и
+    # чистка не начнётся — тест проверял бы не то.
+    monkeypatch.setattr(
+        ddu,
+        "_reg",
+        lambda args, timeout=30: subprocess.CompletedProcess(
+            ["reg", *args], 0, b"", b""
+        ),
+    )
+
+    ddu.wipe_preload("00000409")
+
+    # Вызывается полный путь с префиксом подгрузки, а BRANCHES хранит
+    # «голые» подключи. Сравнивать надо одно с одним — иначе тест всегда
+    # падает, даже когда чистка полная.
+    prefix = f"{ddu.MOUNT_NAME}\\"
+    touched = {sub[len(prefix):] for sub, _ in calls if sub.startswith(prefix)}
+    expected = {sub for sub, _mode in ddu.BRANCHES}
+    assert expected <= touched, f"не вычищены ветки: {expected - touched}"
+    # Антирегрессия к исходному дефекту: шаблон ТОЛЬКО с Preload.
+    assert len(expected) > 1, "BRANCHES снова схлопнулся до одной ветки"
+    intl = r"Control Panel\International"
+    assert intl in touched, r"шаблон не чистится по Control Panel\International"
+    ctf = r"Software\Microsoft\CTF"
+    assert ctf in touched, r"шаблон не чистится по Software\Microsoft\CTF"
+
+
+def test_export_covers_whole_template(monkeypatch, allowed, tmp_path):
+    """Выгрузка берёт поддерево целиком, иначе откат будет неполным.
+
+    Список чистимых веток и список выгружаемых — две независимые вещи.
+    Если выгрузка отстанет от чистки, откат не покроет ровно то, что было
+    стёрто.
+    """
+    seen: list[str] = []
+    dest = tmp_path / "t.reg"
+
+    def fake_reg_cmd(args, timeout=30):
+        seen.append(args[1])
+        dest.write_text("hdr", encoding="utf-16")
+        return subprocess.CompletedProcess(["reg", *args], 0, b"", b"")
+
+    monkeypatch.setattr(ddu, "_reg", fake_reg_cmd)
+    assert ddu.export_preload(dest) is True
+    assert any(s == f"HKU\\{ddu.MOUNT_NAME}" for s in seen), seen
+
+
 def test_result_dialog_mentions_default_profile(monkeypatch):
     """Чистка шаблона — заметное последствие, и оно должно быть в окне.
 

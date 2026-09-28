@@ -58,8 +58,23 @@ DDU_HIVE_PATH = r"C:\Users\Default\NTUSER.DAT"
 #: префикс ``_KLC_`` делает источник опознаваемым в списке hive-ов.
 MOUNT_NAME = "_KLC_DDU"
 
-#: Единственная ветка, которую этот модуль имеет право менять.
+#: Ветка ``Preload`` — одна из нескольких (см. :data:`BRANCHES`).
 PRELOAD_SUBKEY = r"Keyboard Layout\Preload"
+
+#: Ветки шаблона, которые приложение обязано вычистить.
+#:
+#: Их набор - ровно тот, что чистится у пользователя. Раньше шаблон
+#: чистился только по ``Keyboard Layout\Preload``, и этого хватало лишь до
+#: перезагрузки: Windows пересобирает ``HKU\.DEFAULT`` из остальных веток
+#: шаблона, где раскладка оставалась. Найдено на живой машине дампом
+#: шаблона: US оставался в ``Control Panel\International\User Profile``,
+#: в копии ``User Profile System Backup`` и в ``Software\Microsoft\CTF``.
+BRANCHES: tuple[tuple[str, str], ...] = (
+    (PRELOAD_SUBKEY, "preload"),
+    (r"Keyboard Layout\Substitutes", "substitutes"),
+    (r"Control Panel\International", "intl"),
+    (r"Software\Microsoft\CTF", "ctf"),
+)
 
 
 class DduError(RuntimeError):
@@ -78,6 +93,11 @@ def hive_path() -> Path:
 def mounted_subkey() -> str:
     """Путь к ветке Preload в подгруженном виде (без имени корня)."""
     return f"{MOUNT_NAME}\\{PRELOAD_SUBKEY}"
+
+
+def mounted_branch(subkey: str) -> str:
+    """Путь к произвольной ветке шаблона в подгруженном виде."""
+    return f"{MOUNT_NAME}\\{subkey}"
 
 
 def is_hive_file_present() -> bool:
@@ -174,8 +194,12 @@ def export_preload(dest: Path) -> bool:
         return False
     try:
         with mounted():
+            # Выгружается поддерево целиком, а не одна ветка: список веток,
+            # которые чистит wipe_preload, может разойтись с тем, что
+            # выгружено, и тогда откат окажется неполным ровно там, где
+            # была чистка. Шаблон весит ~256 КБ, полный дамп уместен.
             result = _reg(
-                ["export", f"HKU\\{mounted_subkey()}", str(dest), "/y"], timeout=60
+                ["export", f"HKU\\{MOUNT_NAME}", str(dest), "/y"], timeout=60
             )
     except DduError as exc:
         logger.error("Профиль по умолчанию не выгружен: %s", exc)
@@ -191,21 +215,43 @@ def export_preload(dest: Path) -> bool:
 
 
 def wipe_preload(layout_klid: str) -> list[str]:
-    """Удалить записи KLID из ``Preload`` профиля по умолчанию.
-
-    Логика та же, что у пользовательской ветки — переиспользуется
-    ``mutate._clean_preload_keys``, чтобы правила сопоставления KLID
+    """Удалить записи KLID из всех веток шаблона (FIX-37).      Логика та же, что у пользовательской ветки, — переиспользуются     функции ``mutate._clean_*``, чтобы правила сопоставления KLID     (hex / десятичный HKL, MULTI_SZ) и правила точечной чистки     профиля языка не разошлись между пользователем и шаблонами.
     (hex / десятичный HKL, MULTI_SZ) не разошлись между ветками.
     """
     reason = is_blocked_reason()
     if reason:
         logger.info("Профиль по умолчанию не чистится: %s", reason)
         return []
+    deleted: list[str] = []
     try:
         with mounted():
-            deleted = mutate._clean_preload_keys(
-                winreg.HKEY_USERS, mounted_subkey(), layout_klid, delete=True
-            )
+            root = winreg.HKEY_USERS
+            for subkey, mode in BRANCHES:
+                path = f"{MOUNT_NAME}\\{subkey}"
+                before = len(deleted)
+                if mode == "preload":
+                    deleted += mutate._clean_preload_keys(
+                        root, path, layout_klid, True
+                    )
+                elif mode == "substitutes":
+                    deleted += mutate._clean_substitutes_keys(
+                        root, path, layout_klid, True
+                    )
+                elif mode == "intl":
+                    deleted += mutate._clean_intl_profile(
+                        root, path, layout_klid, True
+                    )
+                elif mode == "ctf":
+                    mutate._clean_ctf_profiles(root, path, layout_klid, True)
+                    deleted += mutate._clean_branch_recursive(
+                        root, path, layout_klid, "preload", True
+                    )
+                if len(deleted) > before:
+                    logger.info(
+                        "Очистка профиля по умолчанию / %s: удалено значений: %d",
+                        subkey,
+                        len(deleted) - before,
+                    )
     except DduError as exc:
         logger.error("Профиль по умолчанию не очищен: %s", exc)
         return []

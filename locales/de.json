@@ -150,6 +150,7 @@
   "plan_profile_line": "      • {path} — TSF-Profil wird vollständig entfernt",
   "plan_ctfmon": "      • Neustart von ctfmon.exe zur Aktualisierung des TSF-Eingabecaches",
   "dlg_result_ctf_profiles": "Vollständig entfernte TSF-Profile (CTF): {count}",
+  "dlg_result_ddu": "Auch das Standardprofil wurde bereinigt: Das Layout erscheint nicht in neuen Benutzerkonten, die auf diesem Rechner angelegt werden. „↩ Aus Backup wiederherstellen“ holt es zurück.",
   "dlg_result_ctfmon_ok": "Texteingabedienst (ctfmon) neu gestartet — TSF-Cache aktualisiert",
   "dlg_result_ctfmon_fail": "ctfmon konnte nicht neu gestartet werden. Falls das Layout „zurückkehrt“ — PC neu starten",
   "details_active_cache": "⚠ Nur CTF-Cache-Einträge gefunden, während die Sprache in Windows AKTIV ist — höchstwahrscheinlich der Cache eines aktiven Layouts, kein Phantom. Windows kann diese Einträge neu erstellen.",

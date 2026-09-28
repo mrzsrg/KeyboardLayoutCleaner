@@ -150,6 +150,7 @@
   "plan_profile_line": "      • {path} — TSF 配置文件将被完整删除",
   "plan_ctfmon": "      • 重启 ctfmon.exe 以刷新 TSF 输入缓存",
   "dlg_result_ctf_profiles": "已完整删除的 TSF（CTF）配置文件：{count}",
+  "dlg_result_ddu": "默认用户配置也已清理：在此计算机上新建的用户账户中不会再出现该键盘布局。可用「↩ 从备份还原」按钮恢复。",
   "dlg_result_ctfmon_ok": "文本输入服务 (ctfmon) 已重启 — TSF 缓存已刷新",
   "dlg_result_ctfmon_fail": "无法重启 ctfmon。如果布局“恢复”，请重启电脑",
   "details_active_cache": "⚠ 仅发现 CTF 缓存条目，而该语言在 Windows 中处于活动状态——这很可能是活动布局的缓存，而非幽灵条目。Windows 可能会重新创建这些条目。",

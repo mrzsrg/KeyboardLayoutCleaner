@@ -21,6 +21,7 @@ from typing import Any
 
 import applog
 import capabilities
+import ddu
 import layout_ids
 from applog import get_app_dir
 from applog import resource_path as resource_path
@@ -674,6 +675,14 @@ def restore_backup(reg_path: str | Path, json_path: str | Path = "") -> dict[str
         json_file = Path(json_path) if json_path else None
         if json_file is not None and json_file.is_file():
             result["langlist_restored"] = restore_language_list(json_file)
+    # FIX-37: возврат шаблона профиля по умолчанию. Без него откат
+    # восстановил бы пользователя, но не будущие учётные записи: при
+    # следующей перезагрузке Windows собрал бы HKU\.DEFAULT заново — уже с
+    # удалённой раскладкой, то есть откат не пережил бы перезагрузку.
+    result["ddu_restored"] = None  # None — выгрузки шаблона не было
+    ddu_file = Path(reg_path).with_suffix(".ddu.reg")
+    if ddu_file.is_file():
+        result["ddu_restored"] = ddu.restore_preload(ddu_file)
     result["success"] = bool(result["ok"]) and result["langlist_restored"] is not False
     # Результат запуска ctfmon — для отчёта (ctfmon_restarted).
     result["ctfmon_restarted"] = suspender.started
@@ -774,6 +783,7 @@ def _count_deleted_from_report(result: dict[str, Any]) -> int:
         "hkcu_intl_deleted",
         "hkcu_ctf_deleted",
         "hku_default_deleted",
+        "ddu_preload_deleted",
         "hkcu_settingsync_deleted",
         "ctf_profiles_deleted",
         "other_deleted",
@@ -1010,6 +1020,90 @@ def _detect_plan_drift(
     return []
 
 
+def _note_skipped_branches(
+    result: dict[str, Any], backup_report: dict[str, list[str]]
+) -> None:
+    """Записать в отчёт ветки, которых нет в реестре.
+
+    Не предупреждение, а информация: ветки отсутствуют, бэкапить и удалять
+    в них нечего. Раньше этот случай выдавался за неполный бэкап, из-за
+    чего настоящий отказ экспорта было не отличить от шума.
+    """
+    result["backup_skipped_branches"] = backup_report.get("skipped", [])
+    if result["backup_skipped_branches"]:
+        logger.info(
+            "Бэкап: ветки отсутствуют в реестре (бэкапить нечего): %s",
+            result["backup_skipped_branches"],
+        )
+
+
+def _backup_covers_all(result: dict[str, Any], failed_branches: list[str]) -> bool:
+    """Fail-closed: неэкспортированные ветки отменяют удаление.
+
+    Защита от fail-open: ``backup_registry`` уже обязан был бросить
+    ``BackupError``, но решение дублируется здесь, чтобы будущее изменение
+    контракта не превратилось в удаление без возможности отката.
+    """
+    if not failed_branches:
+        return True
+    result["backup_ok"] = False
+    result["backup_failed_branches"] = failed_branches
+    result["backup_error"] = "бэкап неполный, не экспортированы ветки: " + ", ".join(
+        failed_branches
+    )
+    logger.error(
+        "Удаление ОТМЕНЕНО: неполный бэкап (не экспортированы: %s)",
+        failed_branches,
+    )
+    return False
+
+
+def _wipe_ddu(result: dict[str, Any], layout_id: str) -> int:
+    """Почистить ``Preload`` профиля по умолчанию (FIX-37).
+
+    Отдельным шагом, а не ещё одной веткой в ``_wipe_branches``: шаблон
+    лежит не в загруженном hive, а в файле, и требует подгрузки. Повторяет
+    тот же контракт, что и обычные ветки, — результат в отчёт, ничего при
+    отсутствии прав не делает.
+    """
+    deleted = ddu.wipe_preload(layout_id)
+    result["ddu_preload_deleted"] = result.get("ddu_preload_deleted", []) + deleted
+    return len(deleted)
+
+
+def _backup_ddu_preload(backup_path: Path, result: dict[str, Any]) -> bool:
+    """Выгрузить ``Preload`` профиля по умолчанию рядом с основным бэкапом.
+
+    Fail-closed по тем же правилам, что и основной бэкап: сбой выгрузки
+    СУЩЕСТВУЮЩЕГО шаблона отменяет удаление. Откатывать шаблон без
+    выгрузки нечем, а «удалил и не смог вернуть» здесь недопустимо —
+    затрагиваются будущие учётные записи машины.
+
+    Отсутствие шаблона (нет прав, песочница, файла нет) — не сбой: чистить
+    тогда нечего, и это молчаливый пропуск, а не отказ.
+    """
+    reason = ddu.is_blocked_reason()
+    if reason:
+        logger.info("Профиль по умолчанию не бэкапится: %s", reason)
+        return True
+    sidecar = backup_path.with_suffix(".ddu.reg")
+    if ddu.export_preload(sidecar):
+        result["ddu_backup_path"] = str(sidecar)
+        logger.info("Бэкап профиля по умолчанию: %s", sidecar)
+        return True
+    result["backup_ok"] = False
+    result["ddu_backup_error"] = (
+        "не удалось выгрузить Preload профиля по умолчанию "
+        f"({ddu.hive_path()})"
+    )
+    # И в backup_error: именно это поле читает диалог результата. Записать
+    # только в ddu_backup_error значило бы показать пользователю отказ без
+    # единого слова о причине.
+    result["backup_error"] = result["ddu_backup_error"]
+    logger.error("Удаление ОТМЕНЕНО: %s", result["ddu_backup_error"])
+    return False
+
+
 def delete_layout(layout_id: str, block_cloud_sync: bool = False) -> dict[str, Any]:
     """
     Безопасно удалить указанную раскладку клавиатуры из реестра
@@ -1104,6 +1198,12 @@ def delete_layout(layout_id: str, block_cloud_sync: bool = False) -> dict[str, A
         "hkcu_substitutes_deleted": [],
         "hkcu_ctf_deleted": [],
         "hku_default_deleted": [],
+        # FIX-37: профиль по умолчанию — источник, из которого Windows
+        # пересобирает HKU\.DEFAULT при каждой загрузке. Без его чистки
+        # удалённая раскладка возвращается после перезагрузки.
+        "ddu_preload_deleted": [],
+        "ddu_backup_path": "",
+        "ddu_backup_error": "",
         "hkcu_intl_deleted": [],
         "hkcu_settingsync_deleted": [],
         "ctf_profiles_deleted": [],
@@ -1160,33 +1260,18 @@ def delete_layout(layout_id: str, block_cloud_sync: bool = False) -> dict[str, A
     logger.info("Бэкап реестра: %s", result["backup_path"])
 
     failed_backup_branches = backup_report.get("failed", [])
-    if failed_backup_branches:
-        # Защита от fail-open: ``backup_registry`` уже обязан был бросить
-        # BackupError, но решение дублируется здесь, чтобы будущее изменение
-        # контракта не превратилось в удаление без возможности отката.
-        result["backup_ok"] = False
-        result["backup_failed_branches"] = failed_backup_branches
-        result["backup_error"] = (
-            "бэкап неполный, не экспортированы ветки: "
-            + ", ".join(failed_backup_branches)
-        )
-        logger.error(
-            "Удаление ОТМЕНЕНО: неполный бэкап (не экспортированы: %s)",
-            failed_backup_branches,
-        )
+    if not _backup_covers_all(result, failed_backup_branches):
         return result
 
-    result["backup_skipped_branches"] = backup_report.get("skipped", [])
-    if result["backup_skipped_branches"]:
-        # Не предупреждение, а информация: ветки отсутствуют, бэкапить и
-        # удалять в них нечего. Раньше этот случай выдавался за неполный
-        # бэкап, из-за чего настоящий отказ экспорта было не отличить от шума.
-        logger.info(
-            "Бэкап: ветки отсутствуют в реестре (бэкапить нечего): %s",
-            result["backup_skipped_branches"],
-        )
+    _note_skipped_branches(result, backup_report)
 
     result["langlist_backup_path"] = _backup_language_list(Path(result["backup_path"]))
+
+    # FIX-37: шаблон профиля по умолчанию — до любых изменений и по тем же
+    # правилам fail-closed. Windows пересобирает HKU\.DEFAULT из этого файла
+    # при каждой загрузке, поэтому без его выгрузки откат неполон.
+    if not _backup_ddu_preload(Path(result["backup_path"]), result):
+        return result
 
     # ------------------------------------------------------------------
     # Шаг 2: ОСТАНОВКА служб ввода (ctfmon.exe, TextInputHost.exe).
@@ -1244,6 +1329,9 @@ def delete_layout(layout_id: str, block_cloud_sync: bool = False) -> dict[str, A
 
             # Шаг 3a: Очистка веток реестра (идемпотентная — можно повторять)
             total_deleted = _wipe_branches(branches_now, result, layout_id)
+            # FIX-37: + шаблон профиля по умолчанию — иначе возврат при
+            # следующей перезагрузке.
+            total_deleted += _wipe_ddu(result, layout_id)
 
             # Шаг 4: Синхронизация списка языков через PowerShell
             ok, detail = _sync_language_list_via_powershell(layout_id)
@@ -1271,6 +1359,7 @@ def delete_layout(layout_id: str, block_cloud_sync: bool = False) -> dict[str, A
             # Шаг 5: Верификация — повторная подчистка того, что служба могла
             # вернуть между шагами 3 и 4.
             retry_total = _wipe_branches(branches_now, result, layout_id)
+            retry_total += _wipe_ddu(result, layout_id)
         except Exception as exc:
             # Осознанно широкий except: сбой любой подсистемы (winreg, reg.exe,
             # PowerShell, кодеки) на середине операции не должен превращаться в

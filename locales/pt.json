@@ -150,6 +150,7 @@
   "plan_profile_line": "      • {path} — o perfil TSF será excluído por completo",
   "plan_ctfmon": "      • reinício do ctfmon.exe para atualizar o cache de entrada (TSF)",
   "dlg_result_ctf_profiles": "Perfis TSF (CTF) excluídos por completo: {count}",
+  "dlg_result_ddu": "O perfil padrão também foi limpo: o layout não aparecerá em novas contas de usuário criadas nesta máquina. «↩ Restaurar do backup» traz ele de volta.",
   "dlg_result_ctfmon_ok": "Serviço de entrada de texto (ctfmon) reiniciado — cache TSF atualizado",
   "dlg_result_ctfmon_fail": "Não foi possível reiniciar o ctfmon. Se o layout “voltar”, reinicie o PC",
   "details_active_cache": "⚠ Apenas entradas no cache CTF foram encontradas e o idioma está ATIVO no Windows — provavelmente é o cache de um layout ativo, não um fantasma. O Windows pode recriar essas entradas.",

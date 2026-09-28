@@ -141,6 +141,7 @@ keyboard-layout-cleaner/
 | `HKCU\Software\Microsoft\CTF` | ✅ | ✅ | ✅ | SECONDARY: TSF-профили (decimal-HKL), очистка с остановкой ctfmon |
 | `HKCU\...\SettingSync\Namespace\Language` | ✅ | ✅ | ✅ | SECONDARY |
 | `HKU\.DEFAULT\Keyboard Layout\Preload` | ✅ | ✅ | ✅ (Admin) | SECONDARY: раскладка до логина |
+| `C:\Users\Default\NTUSER.DAT` → `Keyboard Layout\Preload` | ✅ | ✅ | ✅ (Admin) | FIX-37: источник, из которого Windows пересобирает `HKU\.DEFAULT` при загрузке; без чистки удаление отменяется перезагрузкой. Правка ровно одной ветки через `reg load`/`reg unload` (`ddu.py`) |
 | `HKEY_USERS\<SID>` других пользователей | — | — | — | out of scope by design: hives могут быть не загружены, правки перетираются активной сессией |
 | `HKLM\SYSTEM\...\Keyboard Layouts` | ✅ | ✅ (имена) | ❌ никогда | CATALOG: наличие в каталоге ≠ установлена у пользователя; справочник имён `LAYOUT_MAP` |
 

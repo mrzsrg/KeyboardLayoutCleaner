@@ -159,6 +159,7 @@
   "plan_profile_line": "      • {path} — el perfil TSF se eliminará por completo",
   "plan_ctfmon": "      • reinicio de ctfmon.exe para refrescar la caché de entrada TSF",
   "dlg_result_ctf_profiles": "Perfiles TSF (CTF) eliminados por completo: {count}",
+  "dlg_result_ddu": "También se limpió el perfil predeterminado: la distribución no aparecerá en las cuentas de usuario nuevas que se creen en este equipo. «↩ Restaurar desde copia de seguridad» la recupera.",
   "dlg_result_ctfmon_ok": "Servicio de entrada de texto (ctfmon) reiniciado: caché TSF actualizada",
   "dlg_result_ctfmon_fail": "No se pudo reiniciar ctfmon. Si la distribución “reaparece”, reinicia el equipo",
   "details_active_cache": "⚠ Solo se encontraron entradas de la caché CTF mientras el idioma está ACTIVO en Windows: probablemente es la caché de una distribución en uso, no un fantasma. Windows puede volver a crear estas entradas.",

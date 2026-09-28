@@ -159,6 +159,7 @@
   "plan_profile_line": "      • {path} — TSF profile will be deleted entirely",
   "plan_ctfmon": "      • ctfmon.exe restart to refresh the TSF input cache",
   "dlg_result_ctf_profiles": "TSF (CTF) profiles deleted entirely: {count}",
+  "dlg_result_ddu": "The default profile was cleaned too: the layout will not appear in new user accounts created on this machine. The \"↩ Restore from backup\" button will bring it back.",
   "dlg_result_ctfmon_ok": "Text input service (ctfmon) restarted — TSF cache refreshed",
   "dlg_result_ctfmon_fail": "Could not restart ctfmon. If the layout “returns” — reboot the PC",
   "details_active_cache": "⚠ Only CTF-cache entries were found while the language is ACTIVE in Windows — this is most likely the cache of an active layout, not a phantom. Windows may recreate these entries.",

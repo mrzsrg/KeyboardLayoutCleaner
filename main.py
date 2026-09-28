@@ -1782,6 +1782,11 @@ class KeyboardLayoutCleaner(ctk.CTk):
         profiles = len(report.get("ctf_profiles_deleted", []))
         if profiles:
             msg += "\n" + _t("dlg_result_ctf_profiles", count=profiles)
+        # FIX-37: сообщить, что затронут шаблон для будущих учётных записей.
+        # Это заметное последствие, и оставлять его в журнале — значит
+        # сделать изменение машины невидимым для пользователя.
+        if report.get("ddu_preload_deleted"):
+            msg += "\n" + _t("dlg_result_ddu")
         ctfmon = report.get("ctfmon_restarted")
         if ctfmon is True:
             msg += "\n" + _t("dlg_result_ctfmon_ok")

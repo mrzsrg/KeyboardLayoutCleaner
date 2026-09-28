@@ -70,6 +70,7 @@ source = [
     "mutate",
     "langlist",
     "settings",
+    "ddu",
 ]
 omit = ["*/conftest.py", "*/test_*.py", "*/__init__.py"]
 
@@ -104,6 +105,7 @@ py-modules = [
     "mutate",
     "langlist",
     "settings",
+    "ddu",
 ]
 
 [tool.mypy]

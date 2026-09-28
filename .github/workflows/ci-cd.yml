@@ -54,7 +54,7 @@ jobs:
         # и в CI (на стороне мейнтейнера) — так ошибки не проскальзывают.
         # Передаём файлы явно: flat-структура с __main__.py конфликтует
         # при рекурсивном сканировании (.).
-        run: python -m mypy main.py mutex.py scanner.py cleaner.py config.py winproc.py applog.py i18n.py gui_widgets.py ui_theme.py layout_ids.py winapi.py backup.py mutate.py langlist.py settings.py
+        run: python -m mypy main.py mutex.py scanner.py cleaner.py config.py winproc.py applog.py i18n.py gui_widgets.py ui_theme.py layout_ids.py winapi.py backup.py mutate.py langlist.py settings.py ddu.py
 
   test:
     name: Unit tests (Python ${{ matrix.python-version }})

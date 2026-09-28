@@ -75,12 +75,18 @@ class TestBuildLayoutName:
     def test_falls_back_to_layout_when_no_name(self, monkeypatch):
         # FIX-34: «Layout (KLID)» звучало как название раскладки, но им не
         # было. Теперь неизвестная раскладка так и называется.
+        #
+        # Язык интерфейса здесь НАМЕРЕННО не фиксируется: он определяется по
+        # системе, и вписанная русская строка роняла бы прогон на агентах с
+        # другой локалью. Локаль проверяется отдельно в test_i18n.py.
         _ensure_main(monkeypatch)
         import main
 
         with mock.patch.object(main, "get_layout_name", return_value=""):
             name = main._build_layout_name("d001dead")
-        assert name == "неизвестная раскладка (d001dead)"
+        assert "d001dead" in name
+        assert "Layout (" not in name
+        assert name == main._t("layout_name_unknown", klid="d001dead")
 
     def test_already_has_klid(self, monkeypatch):
         _ensure_main(monkeypatch)

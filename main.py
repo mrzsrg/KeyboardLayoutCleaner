@@ -1744,9 +1744,18 @@ class KeyboardLayoutCleaner(ctk.CTk):
         sync_blocked = report.get("language_sync_blocked", False)
         sync_block_detail = report.get("language_sync_block_detail", "")
 
-        msg = (
-            _t("dlg_result_done")
-            + "\n\n"
+        msg = _t("dlg_result_done")
+        # FIX-36: расхождение с панелью переключения идёт ПЕРВЫМ, а не в
+        # хвосте списка. Раньше совет «выйдите и войдите» уезжал под таблицу
+        # удалённых записей, и на живой машине пользователь закрыл окно, не
+        # прочитав его: удаление выглядело не сработавшим, хотя реестр и
+        # список языков были чисты. Показываем по факту расхождения — без
+        # него пустого совета не будет (иначе вернётся ложная тревога FIX-27).
+        switcher_msg = self._format_switcher_check(report)
+        if switcher_msg:
+            msg += "\n\n" + switcher_msg.lstrip("\n")
+        msg += (
+            "\n\n"
             + _t("dlg_result_deleted", count=total_deleted)
             + "\n"
             + _t("dlg_result_sync_prefix")
@@ -1762,10 +1771,7 @@ class KeyboardLayoutCleaner(ctk.CTk):
         if partial:
             msg += "\n" + _t("dlg_result_backup_partial", branches=", ".join(partial))
         msg += self._format_plan_drift(report)
-        # FIX-26: операция успешна, но список языков и панель переключения
-        # разошлись — пользователь увидит «установленный» язык, которого в
-        # переключателе нет. Молчать об этом хуже, чем перезагрузка.
-        msg += self._format_switcher_check(report)
+        # FIX-36: блок сверки переключателя уже добавлен в начало сообщения.
         if report["power_sync"]:
             msg += _t("dlg_advice_logoff")
         else:

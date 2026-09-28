@@ -16,6 +16,7 @@ import pytest
 import backup
 import capabilities
 import cleaner
+import i18n
 import langlist
 from conftest import FakeWinreg, _ensure_main, fake_root_consts, registry_modules
 
@@ -1026,6 +1027,65 @@ class TestPlanDriftIsSurfaced:
             )
             == ""
         )
+
+    def test_signout_advice_comes_first_in_delete_dialog(self, monkeypatch):
+        """FIX-36: совет о входе — в начало окна, а не в хвост.
+
+        Найдено на живой машине: удаление отработало, реестр и список языков
+        были чисты, но панель переключения продолжала показывать старую
+        раскладку. Пользователь закрыл окно, не дойдя до совета внизу, и решил,
+        что удаление не сработало. Проверяем именно ПОРЯДОК: сам факт совета
+        покрыт другими тестами, а вот его место в сообщении ничем не было
+        закреплено — это и позволило ему уехать под таблицу.
+        """
+        cls = self._window(monkeypatch)
+        window = cls.__new__(cls)
+        report = {
+            "power_sync": True,
+            "power_sync_detail": "SUCCESS",
+            "language_sync_blocked": False,
+            "language_sync_block_detail": "Пропущено",
+            "retry_cleaned": 0,
+            "ctfmon_restarted": None,
+            "switcher_check": {"switcher_stale": ["00000409"]},
+        }
+        msg = window._build_success_message(report, 6)
+        advice_pos = msg.find(i18n.fmt("dlg_switcher_session_stale", klids="00000409"))
+        details_pos = msg.find(i18n.fmt("dlg_result_deleted", count=6))
+        assert advice_pos != -1, "совет о входе не показан вовсе"
+        assert details_pos != -1, "подробности удаления не показаны"
+        assert advice_pos < details_pos, (
+            "совет о входе должен идти ПЕРЕД подробностями удаления, "
+            "иначе он снова уедет в хвост и будет пропущен"
+        )
+
+    def test_no_signout_advice_without_real_divergence(self, monkeypatch):
+        """Обратная сторона FIX-36: совет не должен появляться всегда.
+
+        Требование «предупреждать после каждого удаления» выглядит безобидно,
+        но именно безусловный совет был ложной тревогой FIX-27: он отправлял
+        пользователя перезагружаться там, где расхождения не было вовсе.
+        Перенос совета в начало окна не должен превратить его в постоянный.
+        """
+        cls = self._window(monkeypatch)
+        window = cls.__new__(cls)
+        report = {
+            "power_sync": True,
+            "power_sync_detail": "SUCCESS",
+            "language_sync_blocked": False,
+            "language_sync_block_detail": "Пропущено",
+            "retry_cleaned": 0,
+            "ctfmon_restarted": None,
+            "switcher_check": {
+                "tips_without_preload": [],
+                "preload_without_tip": [],
+                "switcher_missing": [],
+                "switcher_stale": [],
+                "ctf_missing": [],
+            },
+        }
+        msg = window._build_success_message(report, 6)
+        assert i18n.fmt("dlg_switcher_signout_advice") not in msg
 
     def test_switcher_placeholder_consistent(self):
         """Все локали используют один и тот же плейсхолдер {klids}."""

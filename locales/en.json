@@ -187,7 +187,7 @@
   "dlg_elevation_association": "The file is not associated with any application, so Windows cannot start it.\nRun the original executable, not a renamed copy.",
   "dlg_switcher_absent": "\nThe switcher is missing layouts that are present in your settings: {klids}. They are installed but do not work.",
   "dlg_switcher_session_stale": "\nThe switcher still shows layouts that were removed from your settings: {klids}. The removal worked, but the switcher is showing the previous set.",
-  "dlg_switcher_signout_advice": "\nSign out and back in: the layout switcher only refreshes at sign-in. Restarting the input service and re-syncing the list do not update it — verified on a real machine. The mismatch persists until you re-sign-in.",
+  "dlg_switcher_signout_advice": "\nFor the changes to take effect, sign out and back in: the layout switcher only refreshes at sign-in. Restarting the input service and re-syncing the list do not update it — verified on a real machine. Until you re-sign-in, the switcher keeps showing the previous set and input keeps using the old layout.",
   "dlg_switcher_ctf_note": "\nFor reference: the input service cache (CTF) has no branch for: {klids}. This is not a fault — simple layouts do not need one and work fine in the switcher.",
   "layout_name_unknown": "unknown layout ({klid})",
   "status_in_list": "in the language list",

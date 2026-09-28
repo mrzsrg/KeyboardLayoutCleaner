@@ -187,7 +187,7 @@
   "dlg_elevation_association": "Die Datei ist keiner Anwendung zugeordnet, daher kann Windows sie nicht starten.\nFühren Sie die ursprüngliche EXE-Datei aus, keine umbenannte Kopie.",
   "dlg_switcher_absent": "\nDie Umschaltliste enthält keine Layouts, die in den Einstellungen vorhanden sind: {klids}. Sie sind installiert, funktionieren aber nicht.",
   "dlg_switcher_session_stale": "\nIn der Umschaltliste stehen noch Layouts, die aus den Einstellungen entfernt wurden: {klids}. Das Entfernen funktionierte, die Liste zeigt aber noch den alten Stand.",
-  "dlg_switcher_signout_advice": "\nAbmelden und wieder anmelden: die Layoutumschaltung wird nur bei der Anmeldung aktualisiert. Weder Neustart der Eingabedienste noch erneute Synchronisation aktualisieren sie — an einer echten Maschine verifiziert. Die Abweichung bleibt bis zur erneuten Anmeldung bestehen.",
+  "dlg_switcher_signout_advice": "\nDamit die Änderungen wirksam werden, abmelden und wieder anmelden: die Layoutumschaltung wird nur bei der Anmeldung aktualisiert. Weder Neustart der Eingabedienste noch erneute Synchronisation aktualisieren sie — an einer echten Maschine verifiziert. Bis zur erneuten Anmeldung zeigt die Umschaltung weiterhin den alten Satz, und die Eingabe läuft über das alte Layout.",
   "dlg_switcher_ctf_note": "\nZur Information: im Cache der Eingabedienste (CTF) fehlt ein Zweig für: {klids}. Das ist kein Fehler — einfache Layouts brauchen keinen und funktionieren in der Umschaltliste einwandfrei.",
   "layout_name_unknown": "unbekanntes Layout ({klid})",
   "status_in_list": "in der Sprachliste",

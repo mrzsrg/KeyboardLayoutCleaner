@@ -187,7 +187,7 @@
   "dlg_elevation_association": "O arquivo não está associado a nenhum aplicativo, portanto o Windows não consegue iniciá-lo.\nExecute o executável original, não uma cópia renomeada.",
   "dlg_switcher_absent": "\nO seletor não contém os layouts que estão nas configurações: {klids}. Estão instalados, mas não funcionam.",
   "dlg_switcher_session_stale": "\nO seletor ainda mostra layouts que foram removidos das configurações: {klids}. A remoção funcionou, mas o seletor mantém a lista anterior.",
-  "dlg_switcher_signout_advice": "\nTermine a sessão e entre novamente: o seletor de teclado só atualiza no início de sessão. Nem reiniciar o serviço de entrada nem sincronizar a lista novamente atualizam — verificado em uma máquina real. A divergência persiste até você entrar de novo.",
+  "dlg_switcher_signout_advice": "\nPara que as alterações entrem em vigor, termine a sessão e entre novamente: o seletor de teclado só atualiza no início de sessão. Nem reiniciar o serviço de entrada nem sincronizar a lista novamente atualizam — verificado em uma máquina real. Até você entrar de novo, o seletor continua mostrando o conjunto anterior e a digitação segue no layout antigo.",
   "dlg_switcher_ctf_note": "\nPara referência: o cache do serviço de entrada (CTF) não tem ramo para: {klids}. Não é uma falha — layouts simples não precisam dele e funcionam bem no seletor.",
   "layout_name_unknown": "layout desconhecido ({klid})",
   "status_in_list": "na lista de idiomas",

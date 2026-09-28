@@ -187,7 +187,7 @@
   "dlg_elevation_association": "El archivo no está asociado a ninguna aplicación, por lo que Windows no puede iniciarlo.\nEjecuta el ejecutable original, no una copia renombrada.",
   "dlg_switcher_absent": "\nEl selector no contiene las distribuciones que sí están en la configuración: {klids}. Están instaladas pero no funcionan.",
   "dlg_switcher_session_stale": "\nEl selector aún muestra distribuciones que se quitaron de la configuración: {klids}. La eliminación funcionó, pero el selector conserva la lista anterior.",
-  "dlg_switcher_signout_advice": "\nCierre sesión y vuelva a entrar: el selector de teclado solo se actualiza al iniciar sesión. Ni reiniciar el servicio de entrada ni volver a sincronizar la lista lo actualizan — verificado en una máquina real. La discrepancia persiste hasta que vuelva a entrar.",
+  "dlg_switcher_signout_advice": "\nPara que los cambios surtan efecto, cierre sesión y vuelva a entrar: el selector de teclado solo se actualiza al iniciar sesión. Ni reiniciar el servicio de entrada ni volver a sincronizar la lista lo actualizan — verificado en una máquina real. Hasta que vuelva a entrar, el selector sigue mostrando el conjunto anterior y la escritura usa el diseño anterior.",
   "dlg_switcher_ctf_note": "\nPara referencia: la caché del servicio de entrada (CTF) no tiene rama para: {klids}. No es un fallo — las distribuciones simples no la necesitan y funcionan bien en el selector.",
   "layout_name_unknown": "disposición desconocida ({klid})",
   "status_in_list": "en la lista de idiomas",

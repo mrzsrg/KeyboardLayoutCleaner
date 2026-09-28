@@ -187,7 +187,7 @@
   "dlg_elevation_association": "该文件未关联任何应用程序，Windows 无法启动它。\n请运行原始的可执行文件，而不是重命名后的副本。",
   "dlg_switcher_absent": "\n切换列表中缺少设置里存在的键盘布局：{klids}。它们已安装，但无法使用。",
   "dlg_switcher_session_stale": "\n切换列表中仍显示已从设置中删除的键盘布局：{klids}。删除已生效，但列表仍显示旧的内容。",
-  "dlg_switcher_signout_advice": "\n退出登录后重新登录：键盘切换列表只在登录时刷新。既重启输入服务，也不再同步列表都无法更新它——已在真实机器上验证。在重新登录之前差异会保留。",
+  "dlg_switcher_signout_advice": "\n要使更改生效，请退出登录后重新登录：键盘切换列表只在登录时刷新。既重启输入服务，也不再同步列表都无法更新它——已在真实机器上验证。在重新登录之前，切换列表会继续显示原有组合，输入仍使用旧布局。",
   "dlg_switcher_ctf_note": "参考：输入服务缓存（CTF）中没有对应的分支：{klids}。这不是故障：简单布局不需要它，并且在切换列表中可正常使用。",
   "layout_name_unknown": "未知键盘布局（{klid}）",
   "status_in_list": "在语言列表中",

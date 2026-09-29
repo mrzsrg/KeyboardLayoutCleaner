@@ -201,7 +201,12 @@ jobs:
           # Для сертификата коммерческого УЦ (Subject != Issuer) флаг не
           # добавляется и проверка остаётся строгой.
           $verifyArgs = @('--exe', 'dist\KeyboardLayoutCleaner\KeyboardLayoutCleaner.exe', '--verify')
-          $pfxCert = Get-PfxCertificate -FilePath cert.pfx
+          # Get-PfxCertificate -FilePath СПРАШИВАЕТ пароль PFX интерактивно.
+          # На раннере ответа нет, и шаг висит до таймаута job'а: проверено
+          # 29.09.2026 — локально тот же вызов печатает «Введите пароль:» и
+          # не возвращает управление. Читаем сертификат неинтерактивно,
+          # отдавая пароль явно.
+          $pfxCert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2('cert.pfx', $env:WIN_CERT_PASS)
           if ($pfxCert.Subject -eq $pfxCert.Issuer) {
             Write-Host "::warning title=Самоподписанный сертификат::Subject=Issuer=$($pfxCert.Subject). Подпись будет проверена на целостность, но доверия к издателю у неё нет: SmartScreen и пользователи по-прежнему покажут 'Неизвестный издатель'. Для настоящего доверия нужен сертификат коммерческого УЦ."
             $verifyArgs += '--allow-untrusted'

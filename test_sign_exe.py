@@ -493,6 +493,21 @@ class TestCiSigningStep:
         # А объяснение в комментарии на месте.
         assert "certutil" in step
 
+    def test_certificate_is_read_without_prompting(self):
+        """Шаг не должен ждать ввода пароля, которого на раннере нет.
+
+        ``Get-PfxCertificate -FilePath`` спрашивает пароль PFX интерактивно.
+        На раннере ответа не будет, и шаг подписи простоит до таймаута job'а —
+        релиз останется без архива. Проверено на живой машине 29.09.2026:
+        тот же вызов печатает «Введите пароль:» и не возвращает управление.
+        """
+        step = self._sign_step()
+        code = "\n".join(
+            line for line in step.splitlines() if not line.strip().startswith("#")
+        )
+        assert "Get-PfxCertificate" not in code
+        assert "X509Certificate2" in code
+
     def test_thumbprint_and_expiry_are_logged(self):
         """Кем подписано и до какого — это и есть доказательство подписи."""
         step = self._sign_step()

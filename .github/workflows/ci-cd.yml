@@ -172,6 +172,21 @@ jobs:
         # репозитории заданы секреты WIN_CERT_PFX (base64 .pfx) и WIN_CERT_PASS.
         if: env.WIN_CERT_PFX != '' && env.WIN_CERT_PASS != ''
         run: |
+          # FIX-38: signtool.exe не обязательно в PATH. Он приезжает с Windows
+          # SDK в «Program Files (x86)\Windows Kits\10\bin\<версия>\x64», и на
+          # разных образах runner'а он то в PATH, то нет. Без этого поиска
+          # шаг падал бы с «signtool.exe не найден» ПОСЛЕ сборки — то есть
+          # релиз без архива и без подписи, а человек узнал бы об этом по
+          # факту, уже потратив сертификат.
+          $sdkBin = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin" -Directory -ErrorAction SilentlyContinue |
+            Where-Object { Test-Path (Join-Path $_.FullName 'x64\signtool.exe') } |
+            Sort-Object Name -Descending |
+            Select-Object -First 1
+          if ($sdkBin) { $env:PATH = "$($sdkBin.FullName)\x64;$env:PATH" }
+          if (-not (Get-Command signtool.exe -ErrorAction SilentlyContinue)) {
+            Write-Error "signtool.exe не найден: на раннере нет Windows SDK. Подпись обязательна (секреты заданы) - релиз не публикуется, чтобы не вышло неподписанной сборки."
+            exit 1
+          }
           python -c "import base64, os; open('cert.pfx', 'wb').write(base64.b64decode(os.environ['WIN_CERT_PFX']))"
           python sign_exe.py --exe "dist\KeyboardLayoutCleaner\KeyboardLayoutCleaner.exe" --pfx cert.pfx --pfx-pass "$env:WIN_CERT_PASS" --tsa-url https://timestamp.digicert.com
           python sign_exe.py --exe "dist\KeyboardLayoutCleaner\KeyboardLayoutCleaner.exe" --verify

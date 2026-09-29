@@ -105,6 +105,64 @@ class TestSignCommandsAlwaysHaveCertSelector:
         assert "sign" not in captured[0]
 
 
+class TestCiSigningStep:
+    """FIX-38: подпись в релизном прогоне не должна зависеть от воли образа.
+
+    Неподписанная публикация — самый дорогой вид «молчаливого успеха»:
+    релиз выходит, хеши считаются и публикуются, README обещает проверку
+    подписи, а проверить нечего. Шаг включается наличием секретов, значит
+    человек подпись запросил и её надо либо поставить, либо честно упасть.
+    """
+
+    @staticmethod
+    def _workflow() -> str:
+        return CI_WORKFLOW.read_text(encoding="utf-8")
+
+    def _sign_step(self) -> str:
+        """Текст шага подписи: от его имени до конца блока run."""
+        text = self._workflow()
+        start = text.index("- name: Sign executable")
+        run_at = text.index("run: |", start)
+        # Конец шага - следующий `- name:` на том же отступе.
+        end = text.index("\n      - name:", run_at)
+        return text[run_at:end]
+
+    def test_signing_happens_before_the_archive_is_created(self):
+        """Подписанный EXE обязан попасть в ZIP, а не в уже готовый архив.
+
+        Порядок «сначала архив, потом подпись» дал бы типичную ошибку: хеши
+        посчитаны для неподписанного файла, а подпись появилась позже и
+        разъехалась с ними.
+        """
+        text = self._workflow()
+        assert text.index("- name: Sign executable") < text.index(
+            "- name: Create ZIP archive"
+        )
+
+    def test_step_does_not_assume_signtool_in_path(self):
+        """Windows SDK лежит в «Windows Kits\\10\\bin\\<версия>\\x64».
+
+        Раньше шаг полагался на PATH образа runner'а. Это не свойство шага, а
+        деталь версии образа: при смене образа подпись молча переставала бы
+        работать.
+        """
+        step = self._sign_step()
+        assert "Windows Kits" in step
+        assert "signtool.exe" in step
+        assert "$env:PATH" in step
+
+    def test_requested_but_impossible_signing_fails_the_release(self):
+        """Секреты заданы, а подписать нечем — падаем, а не публикуем молча."""
+        step = self._sign_step()
+        assert "exit 1" in step
+        assert "Get-Command signtool.exe" in step
+
+    def test_pfx_is_removed_even_when_the_step_stops_early(self):
+        """Секрет на диске раннера не должен пережить шаг."""
+        step = self._sign_step()
+        assert "Remove-Item cert.pfx" in step
+
+
 class TestCliErrorMessages:
     def _argv(self, tmp_path, *extra):
         exe = tmp_path / "fake.exe"

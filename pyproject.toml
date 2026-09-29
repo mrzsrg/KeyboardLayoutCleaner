@@ -50,6 +50,7 @@ addopts = "-v --tb=short"
 markers = [
     "gui: тесты GUI (требуют event loop, могут зависнуть в CI)",
     "live: тесты с реальным реестром (sandbox)",
+    "default_profile: тесты профиля по умолчанию — снимают барьер conftest (FIX-37j)",
 ]
 
 [tool.coverage.run]

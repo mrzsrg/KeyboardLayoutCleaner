@@ -15,6 +15,11 @@ import cleaner
 import ddu
 import mutate
 
+# FIX-37j: единственный файл набора, которому шаблон профиля по умолчанию -
+# предмет проверки. Все тесты здесь работают с подменёнными `ddu._reg` и
+# путём к файлу, поэтому барьер conftest снимается целиком, на модуль.
+pytestmark = pytest.mark.default_profile
+
 
 class FakeReg:
     """Запись вызовов reg.exe с настраиваемыми кодами возврата.

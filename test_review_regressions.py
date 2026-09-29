@@ -474,6 +474,12 @@ class TestDeleteLayoutCloudSyncOptIn:
             cleaner, "_current_preload_klids", lambda admin: {"00000409"}
         )
         monkeypatch.setattr(cleaner, "_wipe_branches", lambda branches, result, lid: 0)
+        # FIX-37j: шаблон профиля по умолчанию недостижим для всего набора
+        # (барьер в conftest). Локально это было не видно: без прав
+        # администратора `ddu.is_blocked_reason()` обрывал путь сам, а на
+        # CI-раннере четыре теста падали, а остальные переписывали файл
+        # шаблона настоящими reg load/save. Отдельная проверка этого класса
+        # изоляции - `test_harness_never_touches_the_default_profile`.
         monkeypatch.setattr(
             cleaner,
             "_sync_language_list_via_powershell",
@@ -563,6 +569,41 @@ class TestDeleteLayoutCloudSyncOptIn:
         assert backup_file.exists()
         text = backup_file.read_text(encoding="utf-16")
         assert "[HKCU\\" + cleaner._SETTINGSYNC_GROUPS_SUBKEY + "]" in text
+
+    def test_harness_never_touches_the_default_profile(self, monkeypatch, tmp_path):
+        """Шаблон профиля по умолчанию недостижим из этих тестов на ЛЮБОЙ машине.
+
+        FIX-37j. Находка CI 29.09.2026: локально тесты были зелёными, а на
+        раннере (администратор) четыре из них падали с CapabilityDeniedError
+        из `ddu.mounted`. Причина - не код, а машина: без прав
+        `ddu.is_blocked_reason()` обрывал путь до шаблона, и тест этого не
+        знал. Тест ниже имитирует именно админскую машину, поэтому грядку
+        прав у него не остаётся.
+        """
+        fake = FakeWinreg()
+        fake.set(
+            fake.HKEY_CURRENT_USER,
+            cleaner._SETTINGSYNC_GROUPS_SUBKEY,
+            values={"Enabled": 1},
+        )
+        self._harness(monkeypatch, fake, tmp_path)
+        # Машина-администратор: ddu больше не отсекает шаг правами.
+        monkeypatch.setattr(cleaner.ddu.winapi, "is_user_an_admin", lambda: True)
+
+        def _unreachable(*args, **kwargs):
+            raise AssertionError(
+                "тест дошёл до подгрузки шаблона профиля по умолчанию: файл "
+                "общий для машины и правом теста не защищён"
+            )
+
+        monkeypatch.setattr(cleaner.ddu, "mounted", _unreachable)
+
+        result = cleaner.delete_layout(self.KLID)
+
+        assert result["success"] is True
+        assert result["ddu_preload_deleted"] == []
+
+
 
 
 # ---------------------------------------------------------------------------

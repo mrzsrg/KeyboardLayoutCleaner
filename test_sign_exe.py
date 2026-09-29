@@ -394,6 +394,26 @@ class TestSignTimeoutIsExplained:
         assert ok is False
         assert "таймаут" in caplog.text
 
+    def test_signing_without_timestamper_says_so(self, monkeypatch, caplog):
+        """Отказ TSA не должен быть молчаливым.
+
+        Измерено 29.09.2026: signtool отвечает «Invalid Timestamp URL» и на
+        настоящем адресе, и на заведомо несуществующем - сообщение значит
+        «сервер не дотянулся». Релиз не падает (сертификат живёт до 2029), но
+        и не делает вид, что метка времени есть: подпись без неё держится
+        ровно до NotAfter.
+        """
+        monkeypatch.setattr(
+            sign_exe.subprocess, "run",
+            lambda cmd, **kw: _completed(),
+        )
+        with caplog.at_level("WARNING"):
+            sign_exe.sign_with_pfx(
+                Path("fake.exe"), Path("cert.pfx"), "secret", tsa_url="",
+                signtool=Path("signtool.exe"),
+            )
+        assert "без метки времени" in caplog.text
+
 
 class TestCiSigningStep:
     """FIX-38: подпись в релизном прогоне не должна зависеть от воли образа.
@@ -513,6 +533,19 @@ class TestCiSigningStep:
         step = self._sign_step()
         assert "Thumbprint" in step
         assert "NotAfter" in step
+
+    def test_timestamper_is_configurable_not_hardcoded(self):
+        """Адрес TSA — настройка, а не константа в шаге.
+
+        Проверено на живом раннере 29.09.2026: signtool отвечает «Invalid
+        Timestamp URL» и на настоящем адресе, и на заведомо несуществующем
+        домене, то есть сообщение означает «сервер не дотянулся». Жёстко
+        прописанный адрес превратил бы это в вечную поломку релиза, а
+        настройка позволяет включить метку времени, когда сервер появится.
+        """
+        step = self._sign_step()
+        assert "WIN_TSA_URL" in step
+        assert "--tsa-url https://" not in step
 
 
 class TestCliErrorMessages:

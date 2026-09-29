@@ -188,7 +188,17 @@ jobs:
             exit 1
           }
           python -c "import base64, os; open('cert.pfx', 'wb').write(base64.b64decode(os.environ['WIN_CERT_PFX']))"
-          python sign_exe.py --exe "dist\KeyboardLayoutCleaner\KeyboardLayoutCleaner.exe" --pfx cert.pfx --pfx-pass "$env:WIN_CERT_PASS" --tsa-url https://timestamp.digicert.com
+          # Метка времени (--tsa-url) берётся из переменной репозитория
+          # WIN_TSA_URL и по умолчанию пуста. Причина, измеренная на живом
+          # раннере: signtool отвечает «Invalid Timestamp URL» и на
+          # https://timestamp.digicert.com, и на заведомо несуществующем
+          # домене - то есть сообщение означает «сервер не дотянулся», а не
+          # «адрес неверен», и упрямство тут не поможет. Без метки времени
+          # подпись действует только пока жив сертификат, а он самоподписанный
+          # и живёт до 2029 года. Для будущего сертификата коммерческого УЦ
+          # метку времени включают одним значением переменной, и подпись
+          # перестаёт зависеть от срока действия сертификата.
+          python sign_exe.py --exe "dist\KeyboardLayoutCleaner\KeyboardLayoutCleaner.exe" --pfx cert.pfx --pfx-pass "$env:WIN_CERT_PASS" --tsa-url "$env:WIN_TSA_URL"
           # FIX-39: `signtool verify /pa` для самоподписанного сертификата
           # честно возвращает «цепочка прервана на недоверенном корне», и
           # обойти это можно только вписав корень в хранилище доверия.

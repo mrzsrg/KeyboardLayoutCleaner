@@ -216,12 +216,12 @@ python -m PyInstaller keyboard_cleaner.spec --noconfirm --clean
 
 <!-- klc:hashes:begin -->
 
-Релиз **v1.3.0**. Хеши посчитаны автоматически при публикации.
+Релиз **v1.3.1**. Хеши посчитаны автоматически при публикации.
 
 | Файл | Размер | SHA256 |
 | --- | --- | --- |
-| `KeyboardLayoutCleaner-1.3.0-portable.zip` | 13 139 056 байт | `D8FB714381953445C665FC03256C1DCCBD1AE3E276A45D750132375019DB2478` |
-| `KeyboardLayoutCleaner/KeyboardLayoutCleaner.exe (из архива)` | 2 418 083 байт | `D8BAAC77CDB05724E6916A0B5ABD3C89A7E21D3BCF4ABB94F52278DC0F369E85` |
+| `KeyboardLayoutCleaner-1.3.1-portable.zip` | 13 139 356 байт | `32F827F560B04F0276347BF33D7B45A050E3FC5FE43B83A18178809A9F8E1345` |
+| `KeyboardLayoutCleaner/KeyboardLayoutCleaner.exe (из архива)` | 2 419 512 байт | `14B12758365EA87024C2389DADDAE9901F3E1B333ABABA91DCA966EB9665A0E7` |
 
 <!-- klc:hashes:end -->
 

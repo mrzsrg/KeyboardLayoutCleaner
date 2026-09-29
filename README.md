@@ -229,10 +229,11 @@ python -m PyInstaller keyboard_cleaner.spec --noconfirm --clean
 > изменения, ещё не выпущенные, поэтому файл, собранный заново, будет иметь
 > другой хеш — это нормально и ничего не говорит о подмене.
 
-Сверить хеш одной командой в PowerShell:
+Сверить хеш одной командой в PowerShell (имя файла не зашито — подойдёт
+любой скачанный релиз, поэтому команда не устаревает вместе с версией):
 
 ```powershell
-(Get-FileHash .\KeyboardLayoutCleaner-1.1.0-portable.zip -Algorithm SHA256).Hash
+(Get-FileHash .\KeyboardLayoutCleaner-*-portable.zip -Algorithm SHA256).Hash
 ```
 
 > Если на GitHub лежит файл `SHA256SUMS.txt` (он кладётся рядом с архивом),

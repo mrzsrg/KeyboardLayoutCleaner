@@ -12,6 +12,7 @@ import hashlib
 import importlib.util
 import json
 import os
+import re
 import subprocess
 import sys
 import zipfile
@@ -281,6 +282,46 @@ def test_readme_still_has_markers():
     assert rh.BEGIN in text, "в README нет маркера начала блока хешей"
     assert rh.END in text, "в README нет маркера конца блока хешей"
     assert text.index(rh.BEGIN) < text.index(rh.END), "маркеры переставлены местами"
+
+
+def test_readme_does_not_hardcode_stale_release_version():
+    """В прозе README не должно быть имени архива конкретной версии.
+
+    Найдено 29.09.2026: таблица хешей в автоматическом блоке говорила про
+    v1.3.1, а команда проверки на 12 строк ниже — про v1.1.0. Пользователь,
+    скопировавший команду дословно, не находил файл, а README противоречил
+    сам себе в пределах одного экрана.
+
+    Блок хешей обновляется автоматически при релизе, а проза — нет, и
+    расходятся они тихо: ни один тест этого не замечал. Поэтому вне блока
+    запрещено имя вида ``KeyboardLayoutCleaner-1.2.3-portable.zip`` — команда
+    проверки должна быть версионно-независимой (``*-portable.zip``).
+    """
+    text = (ROOT / "README.md").read_text(encoding="utf-8")
+    begin, end = text.index(rh.BEGIN), text.index(rh.END) + len(rh.END)
+    outside = text[:begin] + text[end:]
+    stale = re.findall(
+        r"KeyboardLayoutCleaner-\d+\.\d+\.\d+-portable\.zip", outside
+    )
+    assert not stale, f"в прозе README зашита версия: {stale}"
+
+
+def test_readme_hash_block_and_command_agree():
+    """Команда проверки обязана работать для архива из таблицы хешей.
+
+    Связывает прошлую поломку с её последствием: если команда и таблица
+    описывают разные файлы, сверка всегда даёт ложное «файл подменён».
+    Конкретную версию в блок хешей подставляет автоматика, а команда в
+    прозе обязана быть шаблонной — иначе она рассинхронизируется снова.
+    """
+    text = (ROOT / "README.md").read_text(encoding="utf-8")
+    block = text[text.index(rh.BEGIN):text.index(rh.END)]
+    assert "KeyboardLayoutCleaner-*-portable.zip" in text, (
+        "команда проверки должна быть версионно-независимой"
+    )
+    assert re.search(
+        r"KeyboardLayoutCleaner-\d+\.\d+\.\d+-portable\.zip", block
+    ), "в блоке хешей нет конкретного имени архива"
 
 
 @pytest.mark.parametrize("command", ["compute", "readme", "notes"])

@@ -189,7 +189,25 @@ jobs:
           }
           python -c "import base64, os; open('cert.pfx', 'wb').write(base64.b64decode(os.environ['WIN_CERT_PFX']))"
           python sign_exe.py --exe "dist\KeyboardLayoutCleaner\KeyboardLayoutCleaner.exe" --pfx cert.pfx --pfx-pass "$env:WIN_CERT_PASS" --tsa-url https://timestamp.digicert.com
-          python sign_exe.py --exe "dist\KeyboardLayoutCleaner\KeyboardLayoutCleaner.exe" --verify
+          # FIX-39: `signtool verify /pa` для самоподписанного сертификата
+          # честно возвращает «цепочка прервана на недоверенном корне», и
+          # обойти это можно только вписав корень в хранилище доверия.
+          # Проверено: `certutil -addstore -user Root` на раннере ВИСИТ без
+          # диалога подтверждения, то есть такой шаг просто повесил бы
+          # релиз. Поэтому доверие и целостность разнесены: целостность
+          # подписи проверяет sign_exe.py (подпись есть, файл не менялся), а
+          # доверие к издателю для самоподписанного сертификата отсутствует по
+          # определению и объявляется предупреждением в логе, а не замалчивается.
+          # Для сертификата коммерческого УЦ (Subject != Issuer) флаг не
+          # добавляется и проверка остаётся строгой.
+          $verifyArgs = @('--exe', 'dist\KeyboardLayoutCleaner\KeyboardLayoutCleaner.exe', '--verify')
+          $pfxCert = Get-PfxCertificate -FilePath cert.pfx
+          if ($pfxCert.Subject -eq $pfxCert.Issuer) {
+            Write-Host "::warning title=Самоподписанный сертификат::Subject=Issuer=$($pfxCert.Subject). Подпись будет проверена на целостность, но доверия к издателю у неё нет: SmartScreen и пользователи по-прежнему покажут 'Неизвестный издатель'. Для настоящего доверия нужен сертификат коммерческого УЦ."
+            $verifyArgs += '--allow-untrusted'
+          }
+          Write-Host ("Отпечаток сертификата: {0} (действует до {1})" -f $pfxCert.Thumbprint, $pfxCert.NotAfter)
+          python sign_exe.py @verifyArgs
           Remove-Item cert.pfx
       - name: Create ZIP archive
         run: |

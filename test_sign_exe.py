@@ -5,6 +5,8 @@
 сертификат, поэтому вызов без ``/f``, ``/a`` и т.п. подписывать нечем.
 """
 
+import json
+import subprocess
 import sys
 import types
 from pathlib import Path
@@ -25,6 +27,51 @@ def _completed(returncode: int = 0, stderr: str = "") -> types.SimpleNamespace:
     return types.SimpleNamespace(
         returncode=returncode, stdout="", stderr=stderr, args=[]
     )
+
+
+def _ps_payload(
+    status: str = "UnknownError",
+    has_signer: bool = True,
+    sig_type: str = "Authenticode",
+    thumb: str = "CA7D5180DC99F4E652DAADC713537BE9950F0749",
+    subject: str = "CN=KeyboardLayoutCleaner",
+) -> str:
+    """Ответ Get-AuthenticodeSignature в виде, который читает sign_exe."""
+    return json.dumps(
+        {
+            "status": status,
+            "has_signer": has_signer,
+            "type": sig_type,
+            "thumb": thumb,
+            "subject": subject,
+        }
+    )
+
+
+def _run_dispatching(
+    sign_rc: int, ps_stdout: str, captured: list[list[str]] | None = None
+):
+    """Подмена subprocess.run: отдельно signtool, отдельно PowerShell."""
+    envs: list[dict] = []
+
+    def run(cmd, **kw):
+        if captured is not None:
+            captured.append(list(cmd))
+        envs.append(kw.get("env", {}))
+        if "-Command" in cmd:
+            return types.SimpleNamespace(
+                returncode=0, stdout=ps_stdout, stderr="", args=list(cmd)
+            )
+        return types.SimpleNamespace(
+            returncode=sign_rc,
+            stdout="",
+            stderr="SignTool Error: A certificate chain processed, but "
+            "terminated in a root certificate which is not trusted",
+            args=list(cmd),
+        )
+
+    run.envs = envs  # type: ignore[attr-defined]
+    return run
 
 
 class TestEstsModeRemoved:
@@ -105,6 +152,249 @@ class TestSignCommandsAlwaysHaveCertSelector:
         assert "sign" not in captured[0]
 
 
+class TestSelfSignedSignatureVerification:
+    """FIX-39: самоподписанный сертификат — это подпись без доверия.
+
+    Измерено на живой машине 29.09.2026: ``signtool verify /pa`` для такого
+    сертификата честно отвечает «цепочка прервана на недоверенном корне», а
+    ``Get-AuthenticodeSignature`` при этом возвращает статус ``UnknownError``,
+    отпечаток издателя и тип Authenticode — то есть подпись есть и файл не
+    менялся. Подделанный файл даёт ``NotSigned``.
+
+    Значит «доверие» и «целостность» — разные утверждения, и склеивать их в
+    один зелёный статус нельзя: доверия у самоподписанного сертификата нет
+    по определению, а единственный способ получить зелёный ``/pa`` — вписать
+    корень в хранилище доверия раннера, что на неинтерактивной сессии
+    виснет.
+    """
+
+    def test_trusted_signature_passes_strictly(self, monkeypatch, caplog):
+        captured: list[list[str]] = []
+        monkeypatch.setattr(
+            sign_exe.subprocess, "run", _run_dispatching(0, "", captured)
+        )
+        with caplog.at_level("INFO"):
+            ok = sign_exe.verify_signature(
+                Path("fake.exe"), signtool=Path("signtool.exe")
+            )
+        assert ok is True
+        assert len(captured) == 1, "при успешном signtool PowerShell не нужен"
+
+    def test_self_signed_is_rejected_without_explicit_permission(
+        self, monkeypatch, caplog
+    ):
+        monkeypatch.setattr(
+            sign_exe.subprocess, "run", _run_dispatching(1, _ps_payload())
+        )
+        with caplog.at_level("ERROR"):
+            ok = sign_exe.verify_signature(
+                Path("fake.exe"), signtool=Path("signtool.exe")
+            )
+        assert ok is False
+        assert "не прошла проверку" in caplog.text
+
+    def test_self_signed_passes_only_with_explicit_permission(
+        self, monkeypatch, caplog
+    ):
+        monkeypatch.setattr(
+            sign_exe.subprocess, "run", _run_dispatching(1, _ps_payload())
+        )
+        with caplog.at_level("WARNING"):
+            ok = sign_exe.verify_signature(
+                Path("fake.exe"),
+                signtool=Path("signtool.exe"),
+                allow_untrusted=True,
+            )
+        assert ok is True
+        # Отпечаток в логе: иначе «подпись есть» нечем подтвердить.
+        assert "CA7D5180DC99F4E652DAADC713537BE9950F0749" in caplog.text
+        assert "не доверена" in caplog.text
+
+    def test_tampered_file_is_rejected_even_with_permission(self, monkeypatch):
+        """Разрешение на «недоверенный корень» не должно лечить подделку."""
+        monkeypatch.setattr(
+            sign_exe.subprocess,
+            "run",
+            _run_dispatching(1, _ps_payload(status="NotSigned", has_signer=False)),
+        )
+        assert not sign_exe.verify_signature(
+            Path("fake.exe"), signtool=Path("signtool.exe"), allow_untrusted=True
+        )
+
+    def test_hash_mismatch_is_rejected_even_with_permission(self, monkeypatch):
+        monkeypatch.setattr(
+            sign_exe.subprocess,
+            "run",
+            _run_dispatching(1, _ps_payload(status="HashMismatch")),
+        )
+        assert not sign_exe.verify_signature(
+            Path("fake.exe"), signtool=Path("signtool.exe"), allow_untrusted=True
+        )
+
+    def test_broken_powershell_answer_is_rejected(self, monkeypatch):
+        """Мусор в ответе PowerShell не должен читаться как «всё хорошо»."""
+        monkeypatch.setattr(
+            sign_exe.subprocess, "run", _run_dispatching(1, "не json вовсе")
+        )
+        assert not sign_exe.verify_signature(
+            Path("fake.exe"), signtool=Path("signtool.exe"), allow_untrusted=True
+        )
+
+    def test_powershell_failure_is_rejected(self, monkeypatch):
+        def run(cmd, **kw):
+            if "-Command" in cmd:
+                return types.SimpleNamespace(
+                    returncode=1, stdout="", stderr="нет прав", args=list(cmd)
+                )
+            return _completed(1, "not trusted")
+
+        monkeypatch.setattr(sign_exe.subprocess, "run", run)
+        assert not sign_exe.verify_signature(
+            Path("fake.exe"), signtool=Path("signtool.exe"), allow_untrusted=True
+        )
+
+    def test_powershell_timeout_is_rejected(self, monkeypatch):
+        def run(cmd, **kw):
+            if "-Command" in cmd:
+                raise subprocess.TimeoutExpired(cmd, 60)
+            return _completed(1, "not trusted")
+
+        monkeypatch.setattr(sign_exe.subprocess, "run", run)
+        assert not sign_exe.verify_signature(
+            Path("fake.exe"), signtool=Path("signtool.exe"), allow_untrusted=True
+        )
+
+    def test_exe_path_is_passed_via_environment_not_command_string(
+        self, monkeypatch, tmp_path
+    ):
+        """Путь к файлу — пользовательские данные, в строку команды он не идёт."""
+        captured: list[list[str]] = []
+        run = _run_dispatching(1, _ps_payload(), captured)
+        monkeypatch.setattr(sign_exe.subprocess, "run", run)
+        exe = tmp_path / "имя с кавычками и ; $() .exe"
+        exe.write_bytes(b"MZ")
+        sign_exe.verify_signature(
+            exe, signtool=Path("signtool.exe"), allow_untrusted=True
+        )
+        ps_call = next(c for c in captured if "-Command" in c)
+        assert str(exe) not in " ".join(ps_call)
+        assert run.envs[-1]["KLC_EXE_PATH"] == str(exe)  # type: ignore[attr-defined]
+
+    def test_cli_passes_the_permission_flag(self, monkeypatch, tmp_path):
+        exe = tmp_path / "fake.exe"
+        exe.write_bytes(b"MZ")
+        seen: dict = {}
+
+        def fake_verify(path, signtool, **kw):
+            seen.update(kw)
+            return True
+
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            ["sign_exe.py", "--exe", str(exe), "--verify", "--allow-untrusted"],
+        )
+        monkeypatch.setattr(sign_exe, "find_signtool", lambda: Path("signtool.exe"))
+        monkeypatch.setattr(sign_exe, "verify_signature", fake_verify)
+        with pytest.raises(SystemExit) as excinfo:
+            sign_exe.main()
+        assert excinfo.value.code == 0
+        assert seen == {"allow_untrusted": True}
+
+
+class TestPowershellChoice:
+    """Почему 7, а не 5.1 — измерено, а не выбрано на вкус.
+
+    Windows PowerShell 5.1, запущенный из Python, не может загрузить модуль
+    Microsoft.PowerShell.Security: «команда найдена в модуле ..., но
+    загрузить модуль не удалось». Get-AuthenticodeSignature там просто
+    отсутствует, и проверка подписи тихо вырождается в отказ — самый
+    неприятный вид поломки. PowerShell 7 на тех же входах отвечает
+    корректно.
+    """
+
+    def test_powershell7_is_preferred(self, monkeypatch):
+        monkeypatch.setattr(
+            sign_exe.shutil,
+            "which",
+            lambda name: "C:/Program Files/PowerShell/7/pwsh.exe"
+            if name == "pwsh"
+            else "C:/Windows/System32/powershell.exe",
+        )
+        assert sign_exe.find_powershell().endswith("pwsh.exe")
+
+    def test_falls_back_to_windows_powershell(self, monkeypatch):
+        monkeypatch.setattr(
+            sign_exe.shutil,
+            "which",
+            lambda name: None if name == "pwsh" else "C:/Windows/powershell.exe",
+        )
+        assert sign_exe.find_powershell().endswith("powershell.exe")
+
+    def test_absent_powershell_is_reported(self, monkeypatch):
+        monkeypatch.setattr(sign_exe.shutil, "which", lambda name: None)
+        with pytest.raises(FileNotFoundError) as excinfo:
+            sign_exe.find_powershell()
+        assert "pwsh" in str(excinfo.value)
+
+    def test_ps7_module_paths_are_removed_for_the_51_fallback(
+        self, monkeypatch, tmp_path
+    ):
+        """Наследованный PSModulePath от 7 указывает 5.1 на чужие модули."""
+        monkeypatch.setenv(
+            "PSModulePath",
+            "C:/Program Files/PowerShell/7/Modules;"
+            "C:/Users/me/Documents/PowerShell/Modules;"
+            "C:/Windows/System32/WindowsPowerShell/v1.0/Modules",
+        )
+        env = sign_exe._powershell_env(tmp_path / "app.exe")
+        parts = next(v for k, v in env.items() if k.upper() == "PSMODULEPATH").split(";")
+        assert not any("PowerShell/7" in p or "PowerShell\\\\7" in p for p in parts)
+        assert any("WindowsPowerShell" in p for p in parts)
+
+    def test_read_uses_the_chosen_powershell(self, monkeypatch, tmp_path):
+        """В дочерний процесс идёт тот интерпретатор, который нашли."""
+        captured: list[list[str]] = []
+        monkeypatch.setattr(sign_exe, "find_powershell", lambda: "pwsh")
+        monkeypatch.setattr(
+            sign_exe.subprocess, "run", _run_dispatching(0, "", captured)
+        )
+        sign_exe.read_authenticode_status(tmp_path / "app.exe")
+        assert captured[0][0] == "pwsh"
+
+
+class TestSignTimeoutIsExplained:
+    """Недоступный сервер отметки времени не должен выглядеть как стектрейс."""
+
+    def test_pfx_timeout_names_the_timestamper(self, monkeypatch, caplog):
+        def run(cmd, **kw):
+            raise subprocess.TimeoutExpired(cmd, 60)
+
+        monkeypatch.setattr(sign_exe.subprocess, "run", run)
+        with caplog.at_level("ERROR"):
+            ok = sign_exe.sign_with_pfx(
+                Path("fake.exe"), Path("cert.pfx"), "secret",
+                tsa_url="https://timestamp.digicert.com",
+                signtool=Path("signtool.exe"),
+            )
+        assert ok is False
+        assert "таймаут" in caplog.text
+        assert "tsa-url" in caplog.text
+
+    def test_store_timeout_is_explained(self, monkeypatch, caplog):
+        def run(cmd, **kw):
+            raise subprocess.TimeoutExpired(cmd, 60)
+
+        monkeypatch.setattr(sign_exe.subprocess, "run", run)
+        with caplog.at_level("ERROR"):
+            ok = sign_exe.sign_with_store(
+                Path("fake.exe"), tsa_url="https://timestamp.digicert.com",
+                signtool=Path("signtool.exe"),
+            )
+        assert ok is False
+        assert "таймаут" in caplog.text
+
+
 class TestCiSigningStep:
     """FIX-38: подпись в релизном прогоне не должна зависеть от воли образа.
 
@@ -161,6 +451,53 @@ class TestCiSigningStep:
         """Секрет на диске раннера не должен пережить шаг."""
         step = self._sign_step()
         assert "Remove-Item cert.pfx" in step
+
+    def test_self_signed_certificate_is_detected(self):
+        """Отличать самоподписанный сертификат надо по Subject = Issuer."""
+        step = self._sign_step()
+        assert "Get-PfxCertificate" in step
+        assert "Subject -eq" in step
+        assert "Issuer" in step
+
+    def test_untrusted_verification_is_announced_not_hidden(self):
+        """Недоверенный корень — это предупреждение в логе, а не «успех».
+
+        Иначе релиз выглядит подписанным «по-человечески», а пользователь
+        получает ровно то же самое, что и без подписи: окно SmartScreen с
+        «Неизвестный издатель», только без пояснений, почему.
+        """
+        step = self._sign_step()
+        assert "::warning" in step
+        assert "Неизвестный издатель" in step
+        assert "--allow-untrusted" in step
+
+    def test_step_never_touches_the_trust_store(self):
+        """Рутовый сертификат в хранилище доверия — ловушка для раннера.
+
+        Проверено на живой машине 29.09.2026: `certutil -addstore -user Root`
+        на неинтерактивной сессии не возвращает управление и ждёт диалог
+        подтверждения. Такой шаг в релизном прогоне означал бы зависшую
+        сборку, а не доверенную подпись.
+
+        Проверяются только исполняемые строки: объяснение «почему так не
+        делаем» в комментарии обязано остаться, иначе следующий человек
+        снова предложит это «просто добавить».
+        """
+        step = self._sign_step()
+        code = "\n".join(
+            line for line in step.splitlines() if not line.strip().startswith("#")
+        )
+        assert "certutil" not in code
+        assert "addstore" not in code
+        assert "-user Root" not in code
+        # А объяснение в комментарии на месте.
+        assert "certutil" in step
+
+    def test_thumbprint_and_expiry_are_logged(self):
+        """Кем подписано и до какого — это и есть доказательство подписи."""
+        step = self._sign_step()
+        assert "Thumbprint" in step
+        assert "NotAfter" in step
 
 
 class TestCliErrorMessages:

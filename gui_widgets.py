@@ -10,6 +10,7 @@ gui_widgets.py — Переиспользуемые GUI-компоненты д�
 компоненты автоматически поддерживают оба интерфейса: classic и terminal.
 """
 
+import contextlib
 import logging
 from collections.abc import Callable
 from typing import Any
@@ -375,3 +376,115 @@ class ActionButtons(ctk.CTkFrame):
             self.block_sync_checkbox.select()
         else:
             self.block_sync_checkbox.deselect()
+
+
+# ---------------------------------------------------------------------------
+# Диалог подтверждения (FIX-41)
+# ---------------------------------------------------------------------------
+
+
+def ask_confirm(
+    parent: Any,
+    title: str,
+    message: str,
+    *,
+    confirm_text: str | None = None,
+    cancel_text: str | None = None,
+    dangerous: bool = True,
+) -> bool:
+    """Модальное подтверждение с кнопками на языке интерфейса.
+
+    Заменяет ``messagebox.askyesno``: тот рисует кнопки средствами самой
+    Windows, поэтому подписи «Да»/«Нет» всегда на языке СИСТЕМЫ. При
+    интерфейсе, выбранном в приложении (English), кнопки оставались
+    русскими — окно говорило на двух языках сразу.
+
+    Тело диалога — прокручиваемый ``CTkTextbox`` (п.7 Problems.MD): план
+    удаления бывает длиннее окна, и ``messagebox`` его молча обрезал, так
+    что пользователь подтверждал то, чего не видел целиком.
+
+    Returns
+    -------
+    bool
+        True — подтверждено, False — отменено (в т.ч. крестиком).
+    """
+    dialog = ctk.CTkToplevel(parent)
+    dialog.title(title)
+    dialog.geometry("640x520")
+    dialog.minsize(460, 360)
+    dialog.configure(fg_color=theme.S("panel"))
+    # Модальность: диалог принадлежит родителю и перехватывает ввод.
+    dialog.transient(parent)
+    dialog.after(80, lambda: contextlib.suppress(Exception, dialog.grab_set()))
+
+    ctk.CTkLabel(
+        dialog,
+        text=title,
+        font=theme.body_font(theme.N("sz_details_title"), "bold"),
+        text_color=theme.C("section_title"),
+    ).pack(anchor="w", padx=16, pady=(14, 8))
+
+    body = ctk.CTkTextbox(
+        dialog,
+        wrap="word",
+        font=theme.mono_font(13),
+        fg_color=theme.S("detail_bg"),
+        text_color=theme.C("text"),
+    )
+    body.pack(fill="both", expand=True, padx=16, pady=(0, 12))
+    body.insert("1.0", message)
+    # Прокрутка нужна, но правка текста пользователем — нет.
+    body.configure(state="disabled")
+
+    result: dict[str, bool] = {"answer": False}
+
+    def _close(answer: bool) -> None:
+        result["answer"] = answer
+        dialog.destroy()
+
+    buttons = ctk.CTkFrame(dialog, fg_color="transparent")
+    buttons.pack(fill="x", padx=16, pady=(0, 14))
+
+    # Подтверждение решения опасной операции красится опасным цветом, а
+    # восстановления — безопасным: цвет кнопки перестаёт быть украшением.
+    ok_bg = theme.S("danger_bg") if dangerous else theme.S("safe_bg")
+    ok_hover = theme.S("danger_hover") if dangerous else theme.S("safe_hover")
+    ok_border = theme.S("danger_border") if dangerous else theme.S("safe_border")
+    ok_fg = theme.C("danger_text") if dangerous else theme.C("safe_text")
+
+    ctk.CTkButton(
+        buttons,
+        text=confirm_text or _t("dlg_btn_yes"),
+        command=lambda: _close(True),
+        fg_color=ok_bg,
+        hover_color=ok_hover,
+        border_width=theme.N("bw_btn"),
+        border_color=ok_border,
+        text_color=ok_fg,
+        corner_radius=theme.N("radius_btn"),
+        height=40,
+        font=theme.body_font(theme.N("sz_restart"), "bold"),
+    ).pack(side="left", expand=True, fill="x", padx=(0, 6))
+
+    ctk.CTkButton(
+        buttons,
+        text=cancel_text or _t("dlg_btn_no"),
+        command=lambda: _close(False),
+        fg_color=theme.S("menu_btn"),
+        hover_color=theme.S("menu_btn_hover"),
+        text_color=theme.C("menu_text"),
+        corner_radius=theme.N("radius_btn"),
+        height=40,
+        font=theme.body_font(theme.N("sz_restart"), "bold"),
+    ).pack(side="left", expand=True, fill="x", padx=(6, 0))
+
+    # Enter — подтверждение, Esc — отмена: привычные клавиши, иначе
+    # подтвердить нельзя не покидая окно мышью.
+    dialog.bind("<Return>", lambda _e: _close(True))
+    dialog.bind("<Escape>", lambda _e: _close(False))
+    # Крестик = отмена, а не «подтверждено по умолчанию».
+    dialog.protocol("WM_DELETE_WINDOW", lambda: _close(False))
+
+    # Модальный цикл: возвращаемся только после закрытия диалога.
+    parent.wait_window(dialog)
+    return result["answer"]

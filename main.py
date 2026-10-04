@@ -398,7 +398,12 @@ from cleaner import (  # noqa: E402
     plan_layout_removal,
     restore_backup,
 )
-from gui_widgets import ActionButtons, AdminBanner, StatusBar  # noqa: E402
+from gui_widgets import (  # noqa: E402
+    ActionButtons,
+    AdminBanner,
+    StatusBar,
+    ask_confirm,
+)
 from scanner import (  # noqa: E402
     get_affected_branches,
     get_layout_name,
@@ -1569,7 +1574,8 @@ class KeyboardLayoutCleaner(ctk.CTk):
             if plan["admin_privileges"]
             else _t("plan_rights_limited")
         )
-        confirm = messagebox.askyesno(
+        confirm = ask_confirm(
+            self,
             _t("dlg_confirm_delete_title"),
             self._format_plan(plan, layout_name, admin_status),
         )
@@ -2046,8 +2052,11 @@ class KeyboardLayoutCleaner(ctk.CTk):
             if b["has_hku"] and not is_admin():
                 confirm += _t("dlg_restore_confirm_uac")
             confirm += _t("dlg_restore_confirm_overwrite")
-            if not messagebox.askyesno(
-                _t("dlg_restore_confirm_title"), confirm, parent=dialog
+            if not ask_confirm(
+                dialog,
+                _t("dlg_restore_confirm_title"),
+                confirm,
+                dangerous=False,
             ):
                 return
             dialog.destroy()

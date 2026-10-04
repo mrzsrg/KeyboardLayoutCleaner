@@ -508,6 +508,12 @@ def _make_gui_widgets_mock():
         def pack(self, *a, **k):
             pass
 
+    # Диалог подтверждения (FIX-41). По умолчанию подтверждает: старые
+    # тесты моделировали подтверждение через messagebox.askyesno, который
+    # мок не перехватывал и который всегда возвращал «да». Тесты на отмену
+    # подменяют gw.ask_confirm целиком.
+    gw.ask_confirm = lambda *a, **k: True  # type: ignore[attr-defined]
+
     # См. пояснение выше про type: ignore[attr-defined].
     gw.StatusBar = MockStatusBar  # type: ignore[attr-defined]
     gw.ActionButtons = MockActionButtons  # type: ignore[attr-defined]
